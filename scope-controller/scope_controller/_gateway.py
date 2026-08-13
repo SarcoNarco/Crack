@@ -1,6 +1,6 @@
 """Fixed capability gateway for Crack's disposable local test environment.
 
-Only the five functions re-exported by :mod:`scope_controller` are public.
+Only the eight functions re-exported by :mod:`scope_controller` are public.
 There is intentionally no configurable host, token source, command runner, or
 generic file/database handle in this module.
 """
@@ -18,8 +18,12 @@ import threading as _threading
 from types import ModuleType as _ModuleType
 from typing import Final as _Final
 from urllib.parse import urlsplit as _urlsplit
+from uuid import uuid4 as _uuid4
 
 from ledger.init_db import record_event as _record_event
+from ledger.init_db import _append_verification_status as _append_verification_status
+from ledger.init_db import _insert_finding as _insert_finding
+from ledger.init_db import _insert_hypothesis as _insert_hypothesis
 
 
 _REPOSITORY_ROOT: _Final = _Path(__file__).resolve().parents[2]
@@ -35,6 +39,9 @@ _ALLOWED_ACCOUNT_TOKENS: _Final = frozenset(
     {"token-account-a-fixed", "token-account-b-fixed"}
 )
 _SEED_LOCK: _Final = _threading.Lock()
+_VERIFICATION_STATUSES: _Final = frozenset(
+    {"verified", "unverified", "inconclusive"}
+)
 
 
 def _contained_source_path(path: str | _Path) -> _Path:
@@ -181,6 +188,12 @@ def _required_text(field_name: str, value: str) -> str:
     return value
 
 
+def _required_scope_text(operation: str, field_name: str, value: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{operation} blocked: {field_name} must be a non-empty string")
+    return value
+
+
 def record_evidence(
     *,
     run_id: str,
@@ -204,5 +217,80 @@ def record_evidence(
         artifact_reference=_required_text("artifact_reference", artifact_reference),
         policy_decision=_required_text("policy_decision", policy_decision),
         timestamp=_datetime.now(_UTC).isoformat(),
+        database_path=_LEDGER_DATABASE_PATH,
+    )
+
+
+def submit_hypothesis(
+    run_id: str,
+    affected_app_rule: str,
+    concise_claim: str,
+    expected_evidence: str,
+) -> str:
+    """Submit one unverified hypothesis through the fixed ledger boundary."""
+    hypothesis_id = str(_uuid4())
+    _insert_hypothesis(
+        hypothesis_id=hypothesis_id,
+        run_id=_required_scope_text("submit_hypothesis", "run_id", run_id),
+        affected_app_rule=_required_scope_text(
+            "submit_hypothesis", "affected_app_rule", affected_app_rule
+        ),
+        concise_claim=_required_scope_text(
+            "submit_hypothesis", "concise_claim", concise_claim
+        ),
+        expected_evidence=_required_scope_text(
+            "submit_hypothesis", "expected_evidence", expected_evidence
+        ),
+        database_path=_LEDGER_DATABASE_PATH,
+    )
+    return hypothesis_id
+
+
+def update_verification_status(
+    hypothesis_id: str, status: str, verifier_run_id: str
+) -> None:
+    """Append a verification-status revision for one existing hypothesis."""
+    if not isinstance(status, str) or status not in _VERIFICATION_STATUSES:
+        allowed = ", ".join(sorted(_VERIFICATION_STATUSES))
+        raise ValueError(
+            f"update_verification_status blocked: status must be one of {allowed}"
+        )
+
+    _append_verification_status(
+        hypothesis_id=_required_scope_text(
+            "update_verification_status", "hypothesis_id", hypothesis_id
+        ),
+        status=status,
+        verifier_run_id=_required_scope_text(
+            "update_verification_status", "verifier_run_id", verifier_run_id
+        ),
+        database_path=_LEDGER_DATABASE_PATH,
+    )
+
+
+def record_finding(
+    hypothesis_id: str,
+    severity_rationale: str,
+    reproduction_steps: str,
+    evidence_references: str,
+    remediation_direction: str,
+) -> str:
+    """Record a finding only when the hypothesis's latest status is verified."""
+    return _insert_finding(
+        hypothesis_id=_required_scope_text(
+            "record_finding", "hypothesis_id", hypothesis_id
+        ),
+        severity_rationale=_required_scope_text(
+            "record_finding", "severity_rationale", severity_rationale
+        ),
+        reproduction_steps=_required_scope_text(
+            "record_finding", "reproduction_steps", reproduction_steps
+        ),
+        evidence_references=_required_scope_text(
+            "record_finding", "evidence_references", evidence_references
+        ),
+        remediation_direction=_required_scope_text(
+            "record_finding", "remediation_direction", remediation_direction
+        ),
         database_path=_LEDGER_DATABASE_PATH,
     )

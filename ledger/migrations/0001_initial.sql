@@ -1,4 +1,4 @@
--- Crack Sprint 0 ledger schema.
+-- Crack ledger schema.
 
 CREATE TABLE IF NOT EXISTS run (
     id TEXT,
@@ -29,11 +29,12 @@ CREATE TABLE IF NOT EXISTS hypothesis (
     affected_app_rule TEXT,
     concise_claim TEXT,
     expected_evidence TEXT,
-    verification_status TEXT,
+    verification_status TEXT DEFAULT 'unverified',
     verifier_run_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS finding (
+    id TEXT,
     hypothesis_id TEXT,
     severity_rationale TEXT,
     reproduction_steps TEXT,

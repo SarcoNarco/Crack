@@ -7,19 +7,23 @@ from pathlib import Path
 import pytest
 
 import scope_controller
+from ledger import init_db
 from scope_controller import _gateway
 
 
 DEMO_TOKEN_A = "token-account-a-fixed"
 
 
-def test_public_api_contains_only_the_five_capabilities() -> None:
+def test_public_api_contains_only_the_declared_capabilities() -> None:
     assert scope_controller.__all__ == [
         "read_source",
         "query_app_map",
         "call_app_endpoint",
         "reset_environment",
         "record_evidence",
+        "submit_hypothesis",
+        "update_verification_status",
+        "record_finding",
     ]
     assert all(callable(getattr(scope_controller, name)) for name in scope_controller.__all__)
     assert not hasattr(scope_controller, "run_shell")
@@ -183,4 +187,164 @@ def test_record_evidence_rejects_attempted_database_or_sql_parameters() -> None:
             artifact_reference="none",
             policy_decision="blocked",
             sql="DROP TABLE event",
+        )
+
+
+def test_submit_hypothesis_writes_unverified_row_and_audit_event(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ledger_path = tmp_path / "ledger.db"
+    monkeypatch.setattr(_gateway, "_LEDGER_DATABASE_PATH", ledger_path)
+
+    hypothesis_id = scope_controller.submit_hypothesis(
+        "run-identity-1",
+        "GET /records/{id} checks record ownership",
+        "Account B can read Account A's record",
+        "A seeded Account B request returns Account A's record",
+    )
+
+    with sqlite3.connect(ledger_path) as connection:
+        hypothesis = connection.execute(
+            """
+            SELECT id, submitted_by_run, affected_app_rule, concise_claim,
+                   expected_evidence, verification_status, verifier_run_id
+            FROM hypothesis
+            """
+        ).fetchone()
+        event = connection.execute(
+            "SELECT run_id, action_type, policy_decision FROM event"
+        ).fetchone()
+
+    assert hypothesis == (
+        hypothesis_id,
+        "run-identity-1",
+        "GET /records/{id} checks record ownership",
+        "Account B can read Account A's record",
+        "A seeded Account B request returns Account A's record",
+        "unverified",
+        None,
+    )
+    assert event == ("run-identity-1", "hypothesis_submitted", "allowed")
+
+
+def test_record_finding_rejects_unverified_hypothesis(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ledger_path = tmp_path / "ledger.db"
+    monkeypatch.setattr(_gateway, "_LEDGER_DATABASE_PATH", ledger_path)
+    hypothesis_id = scope_controller.submit_hypothesis(
+        "run-identity-2", "rule", "claim", "evidence"
+    )
+
+    with pytest.raises(ValueError, match="only verified hypotheses can become findings"):
+        scope_controller.record_finding(
+            hypothesis_id,
+            "high impact",
+            "1. Send request",
+            "event://request-1",
+            "Enforce record ownership",
+        )
+
+    with sqlite3.connect(ledger_path) as connection:
+        finding_count = connection.execute("SELECT COUNT(*) FROM finding").fetchone()[0]
+    assert finding_count == 0
+
+
+def test_verification_status_is_append_only_and_audited(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ledger_path = tmp_path / "ledger.db"
+    monkeypatch.setattr(_gateway, "_LEDGER_DATABASE_PATH", ledger_path)
+    hypothesis_id = scope_controller.submit_hypothesis(
+        "run-identity-3", "rule", "claim", "evidence"
+    )
+
+    scope_controller.update_verification_status(
+        hypothesis_id, "verified", "run-verifier-3"
+    )
+
+    with sqlite3.connect(ledger_path) as connection:
+        revisions = connection.execute(
+            """
+            SELECT id, concise_claim, verification_status, verifier_run_id
+            FROM hypothesis
+            WHERE id = ?
+            ORDER BY rowid
+            """,
+            (hypothesis_id,),
+        ).fetchall()
+        status_events = connection.execute(
+            """
+            SELECT run_id, action_type, policy_decision
+            FROM event
+            WHERE action_type = 'hypothesis_status_updated'
+            """
+        ).fetchall()
+
+    assert revisions == [
+        (hypothesis_id, "claim", "unverified", None),
+        (hypothesis_id, "claim", "verified", "run-verifier-3"),
+    ]
+    assert status_events == [("run-verifier-3", "hypothesis_status_updated", "allowed")]
+
+
+def test_record_finding_succeeds_after_verification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ledger_path = tmp_path / "ledger.db"
+    monkeypatch.setattr(_gateway, "_LEDGER_DATABASE_PATH", ledger_path)
+    hypothesis_id = scope_controller.submit_hypothesis(
+        "run-identity-4", "rule", "claim", "evidence"
+    )
+    scope_controller.update_verification_status(
+        hypothesis_id, "verified", "run-verifier-4"
+    )
+
+    finding_id = scope_controller.record_finding(
+        hypothesis_id,
+        "High impact: cross-account record disclosure",
+        "1. Authenticate as Account B. 2. Request Account A's record ID.",
+        "event://run-verifier-4/2",
+        "Compare the authenticated account to the record owner before returning it.",
+    )
+
+    with sqlite3.connect(ledger_path) as connection:
+        finding = connection.execute(
+            """
+            SELECT id, hypothesis_id, severity_rationale, reproduction_steps,
+                   evidence_references, remediation_direction
+            FROM finding
+            """
+        ).fetchone()
+
+    assert finding == (
+        finding_id,
+        hypothesis_id,
+        "High impact: cross-account record disclosure",
+        "1. Authenticate as Account B. 2. Request Account A's record ID.",
+        "event://run-verifier-4/2",
+        "Compare the authenticated account to the record owner before returning it.",
+    )
+
+
+def test_no_generic_hypothesis_update_or_delete_path_exists() -> None:
+    assert not hasattr(scope_controller, "update_hypothesis")
+    assert not hasattr(scope_controller, "delete_hypothesis")
+    ledger_source = inspect.getsource(init_db)
+    assert "UPDATE hypothesis" not in ledger_source
+    assert "DELETE FROM hypothesis" not in ledger_source
+
+
+def test_verification_status_rejects_unknown_status(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ledger_path = tmp_path / "ledger.db"
+    monkeypatch.setattr(_gateway, "_LEDGER_DATABASE_PATH", ledger_path)
+    hypothesis_id = scope_controller.submit_hypothesis(
+        "run-identity-5", "rule", "claim", "evidence"
+    )
+
+    with pytest.raises(ValueError, match="status must be one of"):
+        scope_controller.update_verification_status(
+            hypothesis_id, "confirmed", "run-verifier-5"
         )
