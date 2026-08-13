@@ -46,3 +46,7 @@ Built the five-function scope-controller gateway with resolved source-path conta
 ### Sprint 3
 
 Built the config-driven model router under `agents/router/`, with committed provider base URLs and role-to-model mappings, environment-only provider credentials, and a thin OpenAI-compatible completion wrapper for both Groq and OpenAI. Every successful completion records metadata-only evidence through the scope controller, excluding prompts, responses, and API keys. Assumption: both providers use the OpenAI SDK Chat Completions interface; the scope controller supplies the evidence timestamp.
+
+### Sprint 4
+
+Built the source-only mapper agent under `agents/mapper/`, with a Pydantic-validated app-contract schema, exactly one stricter retry for malformed model output, run/event ledger records, and a development-facing `output/app_contract.json` artifact. The mapper reads only a fixed source allowlist through `scope_controller.read_source`; the scope controller now explicitly blocks `app-under-test/README.md` for every agent, and the mapper makes no live app requests. Assumptions: the fixed Sprint 1 source paths are the complete mapper input for this pass, seeded account identifiers are usable inferred role names, and a single fenced JSON document can be unwrapped before Pydantic validation while any other malformed response fails loudly.

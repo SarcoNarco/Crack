@@ -1,0 +1,36 @@
+{
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/health",
+      "description": "Return the status of the app"
+    },
+    {
+      "method": "POST",
+      "path": "/login",
+      "description": "Log in to access app features"
+    },
+    {
+      "method": "GET",
+      "path": "/records/{record_id}",
+      "description": "Retrieve a record by ID"
+    },
+    {
+      "method": "PUT",
+      "path": "/records/{record_id}",
+      "description": "Update a record by ID"
+    },
+    {
+      "method": "DELETE",
+      "path": "/records/{record_id}",
+      "description": "Delete a record by ID"
+    }
+  ],
+  "roles": [
+    "account-a",
+    "account-b"
+  ],
+  "assumptions": [
+    "Only users with 'account-a' or 'account-b' roles have access to the records routes."
+  ]
+}

@@ -24,6 +24,7 @@ from ledger.init_db import record_event as _record_event
 
 _REPOSITORY_ROOT: _Final = _Path(__file__).resolve().parents[2]
 _APP_ROOT: _Final = (_REPOSITORY_ROOT / "app-under-test").resolve(strict=True)
+_BLOCKED_AGENT_SOURCE_FILES: _Final = frozenset({_APP_ROOT / "README.md"})
 _APP_DATABASE_PATH: _Final = _APP_ROOT / "data" / "demo_app.db"
 _LEDGER_DATABASE_PATH: _Final = _REPOSITORY_ROOT / "data" / "ledger.db"
 _APP_HOST: _Final = "127.0.0.1"
@@ -54,6 +55,8 @@ def _contained_source_path(path: str | _Path) -> _Path:
 
     if not resolved.is_file():
         raise PermissionError("read_source blocked: directories and non-files are not readable")
+    if resolved in _BLOCKED_AGENT_SOURCE_FILES:
+        raise PermissionError("read_source blocked: app-under-test/README.md is off-limits to agents")
     return resolved
 
 

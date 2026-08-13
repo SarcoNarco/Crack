@@ -42,6 +42,11 @@ def test_read_source_rejects_absolute_outside_path() -> None:
         scope_controller.read_source("/etc/passwd")
 
 
+def test_read_source_rejects_app_answer_key_readme() -> None:
+    with pytest.raises(PermissionError, match="README.md is off-limits"):
+        scope_controller.read_source("README.md")
+
+
 def test_read_source_rejects_symlink_that_escapes_app_root(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

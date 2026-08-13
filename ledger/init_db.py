@@ -54,5 +54,44 @@ def record_event(
         )
 
 
+def record_run(
+    *,
+    run_id: str,
+    app_version: str,
+    environment_snapshot_id: str,
+    agent_role: str,
+    declared_scope: str,
+    start_time: str,
+    end_time: str,
+    token_budget: int,
+    time_budget: int,
+    status: str,
+    database_path: str | Path = "data/ledger.db",
+) -> None:
+    """Insert one run record through the ledger-owned persistence boundary."""
+    path = initialize_database(database_path)
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO run (
+                id, app_version, environment_snapshot_id, agent_role, declared_scope,
+                start_time, end_time, token_budget, time_budget, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                app_version,
+                environment_snapshot_id,
+                agent_role,
+                declared_scope,
+                start_time,
+                end_time,
+                token_budget,
+                time_budget,
+                status,
+            ),
+        )
+
+
 if __name__ == "__main__":
     print(initialize_database())

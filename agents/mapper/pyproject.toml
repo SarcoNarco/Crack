@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crack-mapper-agent"
+version = "0.1.0"
+description = "Validated source-only app mapper for the contained Crack lab"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "../..", "../../scope-controller", "../../agents/router"]
