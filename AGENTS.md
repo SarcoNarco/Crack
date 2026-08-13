@@ -38,3 +38,7 @@ Scaffolded the local-only FastAPI coordinator with `GET /health`, the raw SQLite
 ### Sprint 1
 
 Built the fixed, local-only FastAPI demo notes app with deterministic Account A/Account B fixtures, seed reset script, and Compose service on port 8100. The sole intentional flaw is a missing record-owner comparison on authenticated `GET /records/{id}`; write paths enforce ownership. Assumption: fixed bearer tokens and SQLite fixtures are adequate because authentication itself is out of Sprint 1 scope.
+
+### Sprint 2
+
+Built the five-function scope-controller gateway with resolved source-path containment, fixed loopback HTTP access and seeded-token/method allowlists, a fixed-path Sprint 1 reset, and ledger-owned event recording. No host, token, database, environment, filesystem, or shell scope is configurable; assumption: the fixed app origin is `http://127.0.0.1:8100`, and the specified endpoint API intentionally sends no request body.
