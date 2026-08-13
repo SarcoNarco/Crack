@@ -9,3 +9,13 @@ services:
       LEDGER_DB_PATH: /workspace/data/ledger.db
     volumes:
       - ./data:/workspace/data
+
+  app-under-test:
+    build:
+      context: ./app-under-test
+    ports:
+      - "127.0.0.1:8100:8100"
+    environment:
+      APP_DB_PATH: /workspace/data/demo_app.db
+    volumes:
+      - ./app-under-test/data:/workspace/data
