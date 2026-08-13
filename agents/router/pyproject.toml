@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crack-model-router"
+version = "0.1.0"
+description = "Config-driven model routing for contained Crack agents"
+requires-python = ">=3.11"
+dependencies = ["openai>=1.0.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "../..", "../../scope-controller"]

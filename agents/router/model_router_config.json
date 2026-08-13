@@ -1,0 +1,19 @@
+{
+  "providers": {
+    "groq": {
+      "base_url": "https://api.groq.com/openai/v1",
+      "api_key_env": "GROQ_API_KEY"
+    },
+    "openai": {
+      "base_url": "https://api.openai.com/v1",
+      "api_key_env": "OPENAI_API_KEY"
+    }
+  },
+  "roles": {
+    "mapper": {"provider": "groq", "model": "llama-3.1-8b-instant"},
+    "identity": {"provider": "groq", "model": "qwen3-32b"},
+    "workflow": {"provider": "groq", "model": "llama-3.3-70b-versatile"},
+    "verifier_a": {"provider": "groq", "model": "kimi-k2"},
+    "verifier_b": {"provider": "openai", "model": "gpt-5.6-luna"}
+  }
+}
