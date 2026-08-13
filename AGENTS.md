@@ -34,3 +34,7 @@ The provided workspace had no Git metadata, so Sprint 0 initializes a local repo
 ### Sprint 0
 
 Scaffolded the local-only FastAPI coordinator with `GET /health`, the raw SQLite ledger schema and initializer, and a coordinator-only Docker Compose setup. Added empty future-sprint directories and documented the containment rules and assumptions.
+
+### Sprint 1
+
+Built the fixed, local-only FastAPI demo notes app with deterministic Account A/Account B fixtures, seed reset script, and Compose service on port 8100. The sole intentional flaw is a missing record-owner comparison on authenticated `GET /records/{id}`; write paths enforce ownership. Assumption: fixed bearer tokens and SQLite fixtures are adequate because authentication itself is out of Sprint 1 scope.
