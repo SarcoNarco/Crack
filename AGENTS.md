@@ -42,3 +42,7 @@ Built the fixed, local-only FastAPI demo notes app with deterministic Account A/
 ### Sprint 2
 
 Built the five-function scope-controller gateway with resolved source-path containment, fixed loopback HTTP access and seeded-token/method allowlists, a fixed-path Sprint 1 reset, and ledger-owned event recording. No host, token, database, environment, filesystem, or shell scope is configurable; assumption: the fixed app origin is `http://127.0.0.1:8100`, and the specified endpoint API intentionally sends no request body.
+
+### Sprint 3
+
+Built the config-driven model router under `agents/router/`, with committed provider base URLs and role-to-model mappings, environment-only provider credentials, and a thin OpenAI-compatible completion wrapper for both Groq and OpenAI. Every successful completion records metadata-only evidence through the scope controller, excluding prompts, responses, and API keys. Assumption: both providers use the OpenAI SDK Chat Completions interface; the scope controller supplies the evidence timestamp.
