@@ -1,0 +1,11 @@
+services:
+  coordinator:
+    build:
+      context: .
+      dockerfile: coordinator/Dockerfile
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      LEDGER_DB_PATH: /workspace/data/ledger.db
+    volumes:
+      - ./data:/workspace/data
