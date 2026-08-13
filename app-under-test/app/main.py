@@ -60,6 +60,22 @@ def login(request: LoginRequest) -> dict[str, str]:
     return {"access_token": account["token"], "account": account["display_name"]}
 
 
+@app.get("/records/mine")
+def get_my_records(account: dict[str, str] = Depends(current_account)) -> dict[str, list[dict[str, str]]]:
+    """Return the authenticated account's records for ordinary in-app navigation."""
+    with connect() as connection:
+        records = connection.execute(
+            """
+            SELECT id, owner_account_id, title, body
+            FROM records
+            WHERE owner_account_id = ?
+            ORDER BY id
+            """,
+            (account["id"],),
+        ).fetchall()
+    return {"records": [dict(record) for record in records]}
+
+
 @app.get("/records/{record_id}")
 def get_record(record_id: str, _: dict[str, str] = Depends(current_account)) -> dict[str, str]:
     """Return a note after confirming the caller has an authenticated session."""

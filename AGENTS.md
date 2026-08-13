@@ -39,6 +39,10 @@ Scaffolded the local-only FastAPI coordinator with `GET /health`, the raw SQLite
 
 Built the fixed, local-only FastAPI demo notes app with deterministic Account A/Account B fixtures, seed reset script, and Compose service on port 8100. The sole intentional flaw is a missing record-owner comparison on authenticated `GET /records/{id}`; write paths enforce ownership. Assumption: fixed bearer tokens and SQLite fixtures are adequate because authentication itself is out of Sprint 1 scope.
 
+### Sprint 1 addendum
+
+Added authenticated `GET /records/mine`, registered before the parameterized record route, so a normal in-app Account B flow can return only Account B's own record IDs and fields. This narrowly supports the contained authorization test without exposing fixture files, database access, or new write behavior.
+
 ### Sprint 2
 
 Built the five-function scope-controller gateway with resolved source-path containment, fixed loopback HTTP access and seeded-token/method allowlists, a fixed-path Sprint 1 reset, and ledger-owned event recording. No host, token, database, environment, filesystem, or shell scope is configurable; assumption: the fixed app origin is `http://127.0.0.1:8100`, and the specified endpoint API intentionally sends no request body.
@@ -54,3 +58,7 @@ Built the source-only mapper agent under `agents/mapper/`, with a Pydantic-valid
 ### Sprint 5
 
 Extended the existing ledger persistence boundary and scope controller with `submit_hypothesis`, append-only `update_verification_status`, and verified-only `record_finding` public capabilities. Hypothesis status changes copy the latest revision into a new row and write an audit event; submissions and findings also write audit events. Added tests for submission, unverified-finding rejection, append-only status history, verified finding creation, allowed statuses, and the absence of generic hypothesis update/delete paths. Assumption: because `record_finding` has no run-ID argument, its audit event uses the latest verifier run ID, falling back to the submitting run only when no verifier ID exists.
+
+### Sprint 6
+
+Built the bounded identity/authorization agent under `agents/identity/`. It reads the Sprint 4 app contract directly, uses the `identity` model-router role to select the declared read route and phrase only unverified hypotheses, then makes exactly two normal-flow scope-controller calls: Account B `GET /records/mine`, followed by Account A `GET /records/{record_id}` using the discovered ID. It records each result via `record_evidence` and submits through `submit_hypothesis` only after Account A receives an Account B-owned record. The CLI is `python -m agents.identity.run`; tests cover no finding, a cross-account read hypothesis, and the two-call bound with no login or write call. Assumption: `owner_account_id` is the app's ownership field, based on the normal response shape; the agent does not read source, the database, or `app-under-test/README.md`. Groq retired `qwen/qwen3-32b`; the identity router now uses the lower-output-cost replacement `openai/gpt-oss-120b` with low reasoning effort. The live acceptance pass succeeded: Account B discovered `note-account-b-001`, Account A retrieved it through the missing `GET /records/{record_id}` ownership boundary, and the agent submitted an unverified hypothesis. This successful structured-output and reproduction pass accepts GPT-OSS for this role.

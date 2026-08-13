@@ -57,15 +57,22 @@ class ModelClient:
     provider: str
     model: str
     _sdk_client: Any
+    default_reasoning_effort: str | None = None
     _evidence_sequence: int = field(default=0, init=False, repr=False)
 
     def complete(
-        self, messages: list[Mapping[str, Any]], reasoning_effort: str | None = None
+        self,
+        messages: list[Mapping[str, Any]],
+        reasoning_effort: str | None = None,
+        response_format: Mapping[str, Any] | None = None,
     ) -> str:
         """Return one text completion and persist metadata-only evidence for it."""
         request: dict[str, Any] = {"model": self.model, "messages": messages}
-        if reasoning_effort is not None:
-            request["reasoning_effort"] = reasoning_effort
+        selected_reasoning_effort = reasoning_effort or self.default_reasoning_effort
+        if selected_reasoning_effort is not None:
+            request["reasoning_effort"] = selected_reasoning_effort
+        if response_format is not None:
+            request["response_format"] = dict(response_format)
 
         response = self._sdk_client.chat.completions.create(**request)
         text = _response_text(response)
@@ -119,4 +126,5 @@ def get_client(
         provider=provider,
         model=role_config["model"],
         _sdk_client=client_factory(api_key=api_key, base_url=provider_config["base_url"]),
+        default_reasoning_effort=role_config.get("reasoning_effort"),
     )

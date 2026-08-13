@@ -28,7 +28,7 @@ def fake_sdk_client(response: object) -> tuple[object, FakeCompletions]:
     ("role", "expected_provider", "expected_model", "expected_base_url", "key_name"),
     [
         ("mapper", "groq", "llama-3.1-8b-instant", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
-        ("identity", "groq", "qwen3-32b", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
+        ("identity", "groq", "openai/gpt-oss-120b", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
         ("workflow", "groq", "llama-3.3-70b-versatile", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
         ("verifier_a", "groq", "kimi-k2", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
         ("verifier_b", "openai", "gpt-5.6-luna", "https://api.openai.com/v1", "OPENAI_API_KEY"),
@@ -86,7 +86,11 @@ def test_complete_records_metadata_only_evidence(
 
     assert result == "private model response"
     assert completions.requests == [
-        {"model": "qwen3-32b", "messages": [{"role": "user", "content": "private prompt"}]}
+        {
+            "model": "openai/gpt-oss-120b",
+            "messages": [{"role": "user", "content": "private prompt"}],
+            "reasoning_effort": "low",
+        }
     ]
     assert evidence_calls == [
         {
@@ -94,10 +98,10 @@ def test_complete_records_metadata_only_evidence(
             "sequence_number": 1,
             "action_type": "model_completion",
             "request_response_summary": (
-                '{"agent_role": "identity", "completion_tokens": 7, "model": "qwen3-32b", '
+                '{"agent_role": "identity", "completion_tokens": 7, "model": "openai/gpt-oss-120b", '
                 '"prompt_tokens": 12, "provider": "groq", "total_tokens": 19}'
             ),
-            "artifact_reference": "model-router://groq/qwen3-32b",
+            "artifact_reference": "model-router://groq/openai/gpt-oss-120b",
             "policy_decision": "allowed",
         }
     ]
@@ -105,3 +109,28 @@ def test_complete_records_metadata_only_evidence(
     assert "private prompt" not in serialized_evidence
     assert "private model response" not in serialized_evidence
     assert "test-key" not in serialized_evidence
+
+
+def test_complete_forwards_structured_output_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))],
+        usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+    )
+    sdk_client, completions = fake_sdk_client(response)
+    monkeypatch.setattr(router, "record_evidence", lambda **_kwargs: None)
+
+    client = get_client("identity", client_factory=lambda **_kwargs: sdk_client)
+    client.complete(
+        [{"role": "user", "content": "Return JSON"}],
+        response_format={"type": "json_object"},
+    )
+
+    assert completions.requests == [{
+        "model": "openai/gpt-oss-120b",
+        "messages": [{"role": "user", "content": "Return JSON"}],
+        "reasoning_effort": "low",
+        "response_format": {"type": "json_object"},
+    }]

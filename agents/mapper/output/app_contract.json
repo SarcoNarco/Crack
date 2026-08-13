@@ -12,6 +12,11 @@
     },
     {
       "method": "GET",
+      "path": "/records/mine",
+      "description": "Retrieve records owned by the authenticated account"
+    },
+    {
+      "method": "GET",
       "path": "/records/{record_id}",
       "description": "Retrieve a record by ID"
     },
