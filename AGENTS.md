@@ -71,6 +71,10 @@ Built the independent verifier under `agents/verifier/`. For an unverified hypot
 
 Added `python -m ui.run_view --latest` and `--run-id <run_id>`, a deterministic terminal view over a ledger-owned SQLite read boundary. It displays run metadata, ordered events, latest append-only hypothesis revisions, and linked findings without invoking agents, providers, the demo app, or ledger writes. Assumption: the production view uses the fixed `data/ledger.db`; tests may inject temporary database paths.
 
+### Sprint 10
+
+Added `python -m reports.generate --latest` and `--run-id <verifier_run_id>`, which deterministically generate Markdown and standalone semantic HTML from a ledger-owned SQLite read-only boundary into ignored `reports/output/`. Reports require `agent_role == verifier` and `status == completed`; `--latest` skips newer incomplete verifier runs. They put scope and limitations before results, render only verified hypotheses that have actual finding rows as findings, fail closed on inconsistent latest status, missing findings, malformed or structurally incomplete reproduction evidence, or malformed evidence-reference lists, and preserve unverified/inconclusive hypotheses separately. Tests cover selection, ordering, semantic HTML, determinism, escaping, atomic writes, and unchanged ledger state. Assumption: recorded reproduction JSON follows the verifier's bounded attempt/step structure; reports make no claim beyond the stored local synthetic run, scope, and reset snapshots.
+
 ## Known follow-ups
 
 - Repo-wide pytest collection still collides because mapper, identity, and verifier each have an un-packaged `test_agent.py`; run these suites individually until that layout is corrected in a future sprint.

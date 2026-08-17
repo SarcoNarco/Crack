@@ -42,6 +42,7 @@ class Hypothesis:
     submitted_by_run: str
     affected_app_rule: str
     concise_claim: str
+    expected_evidence: str
     verification_status: str
     verifier_run_id: str | None
 
@@ -51,6 +52,7 @@ class Finding:
     id: str
     hypothesis_id: str
     severity_rationale: str
+    reproduction_steps: str
     remediation_direction: str
     evidence_references: str
 
@@ -96,7 +98,7 @@ def _latest_hypotheses(connection: sqlite3.Connection, run_id: str) -> list[Hypo
     rows = _read_query(
         connection,
         """SELECT rowid, id, submitted_by_run, affected_app_rule, concise_claim,
-                  verification_status, verifier_run_id
+                  expected_evidence, verification_status, verifier_run_id
            FROM hypothesis ORDER BY rowid ASC""",
     )
     latest: dict[str, sqlite3.Row] = {}
@@ -114,6 +116,7 @@ def _latest_hypotheses(connection: sqlite3.Connection, run_id: str) -> list[Hypo
             submitted_by_run=_as_text(row["submitted_by_run"]),
             affected_app_rule=_as_text(row["affected_app_rule"]),
             concise_claim=_as_text(row["concise_claim"]),
+            expected_evidence=_as_text(row["expected_evidence"]),
             verification_status=_as_text(row["verification_status"]),
             verifier_run_id=None if row["verifier_run_id"] is None else _as_text(row["verifier_run_id"]),
         )
@@ -156,6 +159,7 @@ def read_run(run_id: str, database_path: str | Path = "data/ledger.db") -> RunVi
             Finding(
                 id=_as_text(finding["id"]), hypothesis_id=_as_text(finding["hypothesis_id"]),
                 severity_rationale=_as_text(finding["severity_rationale"]),
+                reproduction_steps=_as_text(finding["reproduction_steps"]),
                 remediation_direction=_as_text(finding["remediation_direction"]),
                 evidence_references=_as_text(finding["evidence_references"]),
             )
@@ -174,6 +178,23 @@ def read_latest_run(database_path: str | Path = "data/ledger.db") -> RunView:
         rows = _read_query(connection, "SELECT id FROM run ORDER BY rowid DESC LIMIT 1")
         if not rows:
             raise LedgerReadError("no runs exist in the ledger")
+        run_id = _as_text(rows[0]["id"])
+    finally:
+        connection.close()
+    return read_run(run_id, database_path)
+
+
+def read_latest_verifier_run(database_path: str | Path = "data/ledger.db") -> RunView:
+    """Read the most recently inserted verifier run without changing the database."""
+    connection = _connect_read_only(database_path)
+    try:
+        rows = _read_query(
+            connection,
+            "SELECT id FROM run WHERE agent_role = ? AND status = ? ORDER BY rowid DESC LIMIT 1",
+            ("verifier", "completed"),
+        )
+        if not rows:
+            raise LedgerReadError("no completed verifier runs exist in the ledger")
         run_id = _as_text(rows[0]["id"])
     finally:
         connection.close()
