@@ -20,6 +20,7 @@ _SOURCE_PATHS = ("app/main.py", "scripts/seed.py", "app/database.py")
 _OUTPUT_PATH = Path(__file__).resolve().parents[1] / "output" / "app_contract.json"
 _LEDGER_DATABASE_PATH = Path(__file__).resolve().parents[3] / "data" / "ledger.db"
 _DECLARED_SCOPE = "source-only mapping of app-under-test through scope_controller.read_source"
+_STRUCTURED_OUTPUT = {"type": "json_object"}
 
 
 class Route(BaseModel):
@@ -118,7 +119,8 @@ def run_mapper(
 
     for attempt in range(2):
         last_raw_response = model_client.complete(
-            [{"role": "user", "content": _prompt(context, strict=attempt == 1)}]
+            [{"role": "user", "content": _prompt(context, strict=attempt == 1)}],
+            response_format=_STRUCTURED_OUTPUT,
         )
         try:
             contract = _parse_contract(last_raw_response)

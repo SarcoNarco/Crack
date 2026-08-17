@@ -27,7 +27,7 @@ def fake_sdk_client(response: object) -> tuple[object, FakeCompletions]:
 @pytest.mark.parametrize(
     ("role", "expected_provider", "expected_model", "expected_base_url", "key_name"),
     [
-        ("mapper", "groq", "llama-3.1-8b-instant", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
+        ("mapper", "groq", "openai/gpt-oss-20b", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
         ("identity", "groq", "openai/gpt-oss-120b", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
         ("workflow", "groq", "llama-3.3-70b-versatile", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
         ("verifier_a", "groq", "openai/gpt-oss-120b", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
@@ -159,3 +159,19 @@ def test_complete_forwards_structured_output_controls(
     if reasoning_effort is not None:
         expected_request["reasoning_effort"] = reasoning_effort
     assert completions.requests == [expected_request]
+
+
+def test_mapper_migration_is_narrow_and_uses_low_reasoning_effort() -> None:
+    config = router._load_config()
+    assert config["roles"]["mapper"] == {
+        "provider": "groq", "model": "openai/gpt-oss-20b", "reasoning_effort": "low",
+    }
+    assert config["roles"]["identity"] == {
+        "provider": "groq", "model": "openai/gpt-oss-120b", "reasoning_effort": "low",
+    }
+    assert config["roles"]["verifier_a"] == {
+        "provider": "groq", "model": "openai/gpt-oss-120b", "reasoning_effort": "low",
+    }
+    assert config["roles"]["verifier_b"] == {
+        "provider": "gemini", "model": "gemini-3.5-flash",
+    }

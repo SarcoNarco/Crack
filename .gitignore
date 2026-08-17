@@ -4,4 +4,5 @@ __pycache__/
 data/*.db
 data/*.db-*
 reports/output/
+demo/output/
 .env

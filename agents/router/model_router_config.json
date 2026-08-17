@@ -14,7 +14,7 @@
     }
   },
   "roles": {
-    "mapper": {"provider": "groq", "model": "llama-3.1-8b-instant"},
+    "mapper": {"provider": "groq", "model": "openai/gpt-oss-20b", "reasoning_effort": "low"},
     "identity": {"provider": "groq", "model": "openai/gpt-oss-120b", "reasoning_effort": "low"},
     "workflow": {"provider": "groq", "model": "llama-3.3-70b-versatile"},
     "verifier_a": {"provider": "groq", "model": "openai/gpt-oss-120b", "reasoning_effort": "low"},

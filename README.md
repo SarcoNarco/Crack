@@ -15,6 +15,18 @@ python -m ui.run_view --run-id <run_id>
 
 The view displays run metadata, ordered evidence events, latest append-only hypothesis revisions, and linked findings. It opens the fixed repository-local ledger in SQLite read-only mode and never starts agents or writes ledger data.
 
+## Canonical MVP demo
+
+With the existing local Groq and Gemini environment variables loaded (without printing their values) and the local Compose services running, execute:
+
+```sh
+python -m coordinator.demo
+```
+
+The fail-closed workflow checks the fixed loopback app and four configured roles, maps source through the scope controller, resets the disposable app, runs identity, passes its exact single hypothesis to the independent verifier, then uses that exact verifier run for the terminal view and twice-generated deterministic reports. It prints safe IDs and artifact paths and writes an ignored session manifest under `demo/output/`.
+
+Exit code `0` means one new hypothesis was independently reproduced as `verified` with a real finding and byte-stable Markdown and HTML reports. `unverified`, `inconclusive`, provider, app, schema, or integrity failures are not presented as demo success. See [the recording runbook](docs/demo-runbook.md) for prerequisites, presentation flow, shutdown, and troubleshooting.
+
 ## Evidence reports
 
 Generate deterministic Markdown and standalone HTML reports together from a completed verifier run:

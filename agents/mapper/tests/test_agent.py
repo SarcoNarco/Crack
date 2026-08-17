@@ -25,9 +25,11 @@ class FakeClient:
     def __init__(self, responses: list[str]) -> None:
         self.responses = responses
         self.messages: list[list[dict[str, str]]] = []
+        self.requests: list[dict[str, object]] = []
 
-    def complete(self, messages: list[dict[str, str]]) -> str:
+    def complete(self, messages: list[dict[str, str]], **kwargs: object) -> str:
         self.messages.append(messages)
+        self.requests.append(kwargs)
         return self.responses.pop(0)
 
 
@@ -56,6 +58,7 @@ def test_mapper_successfully_validates_and_writes_contract(
     assert contract.model_dump() == VALID_CONTRACT
     assert json.loads(output_path.read_text(encoding="utf-8")) == VALID_CONTRACT
     assert len(client.messages) == 1
+    assert client.requests == [{"response_format": {"type": "json_object"}}]
     with sqlite3.connect(temporary_ledger) as connection:
         assert connection.execute("SELECT status, agent_role FROM run").fetchone() == ("completed", "mapper")
         assert connection.execute("SELECT action_type FROM event").fetchone() == ("app_contract_created",)
@@ -68,6 +71,10 @@ def test_mapper_retries_once_then_succeeds(temporary_ledger: Path, tmp_path: Pat
 
     assert contract.roles == ["Account A", "Account B"]
     assert len(client.messages) == 2
+    assert client.requests == [
+        {"response_format": {"type": "json_object"}},
+        {"response_format": {"type": "json_object"}},
+    ]
     assert "final retry" in client.messages[1][0]["content"]
 
 
