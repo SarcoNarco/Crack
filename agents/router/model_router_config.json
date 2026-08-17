@@ -7,13 +7,17 @@
     "openai": {
       "base_url": "https://api.openai.com/v1",
       "api_key_env": "OPENAI_API_KEY"
+    },
+    "gemini": {
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+      "api_key_env": "GEMINI_API_KEY"
     }
   },
   "roles": {
     "mapper": {"provider": "groq", "model": "llama-3.1-8b-instant"},
     "identity": {"provider": "groq", "model": "openai/gpt-oss-120b", "reasoning_effort": "low"},
     "workflow": {"provider": "groq", "model": "llama-3.3-70b-versatile"},
-    "verifier_a": {"provider": "groq", "model": "kimi-k2"},
-    "verifier_b": {"provider": "openai", "model": "gpt-5.6-luna"}
+    "verifier_a": {"provider": "groq", "model": "openai/gpt-oss-120b", "reasoning_effort": "low"},
+    "verifier_b": {"provider": "gemini", "model": "gemini-3.5-flash"}
   }
 }

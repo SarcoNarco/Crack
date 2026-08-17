@@ -1,6 +1,6 @@
 """Fixed capability gateway for Crack's disposable local test environment.
 
-Only the eight functions re-exported by :mod:`scope_controller` are public.
+Only the nine functions re-exported by :mod:`scope_controller` are public.
 There is intentionally no configurable host, token source, command runner, or
 generic file/database handle in this module.
 """
@@ -8,8 +8,10 @@ generic file/database handle in this module.
 from __future__ import annotations
 
 import http.client as _http_client
+import hashlib as _hashlib
 import importlib.util as _importlib_util
 import json as _json
+import sqlite3 as _sqlite3
 from datetime import UTC as _UTC
 from datetime import datetime as _datetime
 from pathlib import Path as _Path
@@ -24,6 +26,7 @@ from ledger.init_db import record_event as _record_event
 from ledger.init_db import _append_verification_status as _append_verification_status
 from ledger.init_db import _insert_finding as _insert_finding
 from ledger.init_db import _insert_hypothesis as _insert_hypothesis
+from ledger.init_db import get_latest_hypothesis as _get_latest_hypothesis
 
 
 _REPOSITORY_ROOT: _Final = _Path(__file__).resolve().parents[2]
@@ -175,11 +178,38 @@ def _load_fixed_seed_module() -> _ModuleType:
             _sys.modules["app.database"] = previous_database
 
 
-def reset_environment() -> None:
-    """Run only the fixed Sprint 1 seed routine against its fixed local database."""
+def _seeded_state_hash() -> str:
+    """Hash logical fixture rows, excluding SQLite's changing file metadata."""
+    with _sqlite3.connect(_APP_DATABASE_PATH) as connection:
+        accounts = connection.execute(
+            "SELECT id, username, password, token, display_name FROM accounts ORDER BY id"
+        ).fetchall()
+        records = connection.execute(
+            "SELECT id, owner_account_id, title, body FROM records ORDER BY id"
+        ).fetchall()
+    logical_state = _json.dumps(
+        {"accounts": accounts, "records": records},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    return _hashlib.sha256(logical_state).hexdigest()[:16]
+
+
+def reset_environment() -> str:
+    """Run the fixed seed routine and identify this reset plus its seeded state."""
     with _SEED_LOCK:
         seed_module = _load_fixed_seed_module()
         seed_module.seed()
+        state_hash = _seeded_state_hash()
+        return f"reset:{_uuid4()}:state-sha256:{state_hash}"
+
+
+def read_hypothesis(hypothesis_id: str) -> dict[str, str | None]:
+    """Read only the latest revision of one hypothesis from the fixed ledger."""
+    return _get_latest_hypothesis(
+        _required_scope_text("read_hypothesis", "hypothesis_id", hypothesis_id),
+        database_path=_LEDGER_DATABASE_PATH,
+    )
 
 
 def _required_text(field_name: str, value: str) -> str:

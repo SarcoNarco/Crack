@@ -4,6 +4,7 @@ from ._gateway import (
     call_app_endpoint,
     query_app_map,
     read_source,
+    read_hypothesis,
     record_finding,
     record_evidence,
     reset_environment,
@@ -13,6 +14,7 @@ from ._gateway import (
 
 __all__ = [
     "read_source",
+    "read_hypothesis",
     "query_app_map",
     "call_app_endpoint",
     "reset_environment",

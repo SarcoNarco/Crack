@@ -76,6 +76,26 @@ def _latest_hypothesis(
     ).fetchone()
 
 
+def get_latest_hypothesis(
+    hypothesis_id: str, database_path: str | Path = "data/ledger.db"
+) -> dict[str, str | None]:
+    """Return the latest append-only revision for one hypothesis ID."""
+    path = initialize_database(database_path)
+    with sqlite3.connect(path) as connection:
+        current = _latest_hypothesis(connection, hypothesis_id)
+    if current is None:
+        raise ValueError(f"hypothesis {hypothesis_id!r} was not found")
+    return {
+        "id": current[0],
+        "submitted_by_run": current[1],
+        "affected_app_rule": current[2],
+        "concise_claim": current[3],
+        "expected_evidence": current[4],
+        "verification_status": current[5],
+        "verifier_run_id": current[6],
+    }
+
+
 def _insert_hypothesis(
     *,
     hypothesis_id: str,

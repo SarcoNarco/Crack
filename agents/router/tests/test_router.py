@@ -30,8 +30,14 @@ def fake_sdk_client(response: object) -> tuple[object, FakeCompletions]:
         ("mapper", "groq", "llama-3.1-8b-instant", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
         ("identity", "groq", "openai/gpt-oss-120b", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
         ("workflow", "groq", "llama-3.3-70b-versatile", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
-        ("verifier_a", "groq", "kimi-k2", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
-        ("verifier_b", "openai", "gpt-5.6-luna", "https://api.openai.com/v1", "OPENAI_API_KEY"),
+        ("verifier_a", "groq", "openai/gpt-oss-120b", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
+        (
+            "verifier_b",
+            "gemini",
+            "gemini-3.5-flash",
+            "https://generativelanguage.googleapis.com/v1beta/openai/",
+            "GEMINI_API_KEY",
+        ),
     ],
 )
 def test_get_client_resolves_configured_role(
@@ -55,11 +61,17 @@ def test_get_client_resolves_configured_role(
     assert observed == {"api_key": "test-key", "base_url": expected_base_url}
 
 
-def test_get_client_fails_when_provider_key_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+@pytest.mark.parametrize(
+    ("role", "key_name"),
+    [("identity", "GROQ_API_KEY"), ("verifier_b", "GEMINI_API_KEY")],
+)
+def test_get_client_fails_when_provider_key_is_missing(
+    monkeypatch: pytest.MonkeyPatch, role: str, key_name: str
+) -> None:
+    monkeypatch.delenv(key_name, raising=False)
 
-    with pytest.raises(ModelRouterError, match="GROQ_API_KEY") as error:
-        get_client("identity")
+    with pytest.raises(ModelRouterError, match=key_name) as error:
+        get_client(role)
 
     assert "test-key" not in str(error.value)
 
@@ -111,10 +123,21 @@ def test_complete_records_metadata_only_evidence(
     assert "test-key" not in serialized_evidence
 
 
+@pytest.mark.parametrize(
+    ("role", "key_name", "model", "reasoning_effort"),
+    [
+        ("identity", "GROQ_API_KEY", "openai/gpt-oss-120b", "low"),
+        ("verifier_b", "GEMINI_API_KEY", "gemini-3.5-flash", None),
+    ],
+)
 def test_complete_forwards_structured_output_controls(
     monkeypatch: pytest.MonkeyPatch,
+    role: str,
+    key_name: str,
+    model: str,
+    reasoning_effort: str | None,
 ) -> None:
-    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.setenv(key_name, "test-key")
     response = SimpleNamespace(
         choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))],
         usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1, total_tokens=2),
@@ -122,15 +145,17 @@ def test_complete_forwards_structured_output_controls(
     sdk_client, completions = fake_sdk_client(response)
     monkeypatch.setattr(router, "record_evidence", lambda **_kwargs: None)
 
-    client = get_client("identity", client_factory=lambda **_kwargs: sdk_client)
+    client = get_client(role, client_factory=lambda **_kwargs: sdk_client)
     client.complete(
         [{"role": "user", "content": "Return JSON"}],
         response_format={"type": "json_object"},
     )
 
-    assert completions.requests == [{
-        "model": "openai/gpt-oss-120b",
+    expected_request = {
+        "model": model,
         "messages": [{"role": "user", "content": "Return JSON"}],
-        "reasoning_effort": "low",
         "response_format": {"type": "json_object"},
-    }]
+    }
+    if reasoning_effort is not None:
+        expected_request["reasoning_effort"] = reasoning_effort
+    assert completions.requests == [expected_request]

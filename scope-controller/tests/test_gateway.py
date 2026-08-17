@@ -17,6 +17,7 @@ DEMO_TOKEN_A = "token-account-a-fixed"
 def test_public_api_contains_only_the_declared_capabilities() -> None:
     assert scope_controller.__all__ == [
         "read_source",
+        "read_hypothesis",
         "query_app_map",
         "call_app_endpoint",
         "reset_environment",
@@ -119,13 +120,25 @@ def test_reset_environment_calls_fixed_seed_and_ignores_environment_path(
     outside_database = tmp_path / "must-not-be-created.db"
     monkeypatch.setenv("APP_DB_PATH", str(outside_database))
 
-    scope_controller.reset_environment()
+    snapshot_id = scope_controller.reset_environment()
 
     assert not outside_database.exists()
     with sqlite3.connect(_gateway._APP_DATABASE_PATH) as connection:
         accounts = connection.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
         records = connection.execute("SELECT COUNT(*) FROM records").fetchone()[0]
     assert (accounts, records) == (2, 2)
+    assert snapshot_id.startswith("reset:")
+    assert ":state-sha256:" in snapshot_id
+
+
+def test_each_reset_has_a_unique_id_for_the_same_seeded_state() -> None:
+    first = scope_controller.reset_environment()
+    second = scope_controller.reset_environment()
+
+    assert first != second
+    assert first.rsplit(":state-sha256:", 1)[1] == second.rsplit(
+        ":state-sha256:", 1
+    )[1]
 
 
 def test_reset_environment_accepts_no_command_argument() -> None:
@@ -225,6 +238,34 @@ def test_submit_hypothesis_writes_unverified_row_and_audit_event(
         None,
     )
     assert event == ("run-identity-1", "hypothesis_submitted", "allowed")
+
+
+def test_read_hypothesis_returns_only_the_latest_revision(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ledger_path = tmp_path / "ledger.db"
+    monkeypatch.setattr(_gateway, "_LEDGER_DATABASE_PATH", ledger_path)
+    hypothesis_id = scope_controller.submit_hypothesis(
+        "run-identity-read", "rule", "claim", "evidence"
+    )
+    scope_controller.update_verification_status(
+        hypothesis_id, "inconclusive", "run-verifier-read"
+    )
+
+    hypothesis = scope_controller.read_hypothesis(hypothesis_id)
+
+    assert hypothesis == {
+        "id": hypothesis_id,
+        "submitted_by_run": "run-identity-read",
+        "affected_app_rule": "rule",
+        "concise_claim": "claim",
+        "expected_evidence": "evidence",
+        "verification_status": "inconclusive",
+        "verifier_run_id": "run-verifier-read",
+    }
+    assert "database_path" not in inspect.signature(
+        scope_controller.read_hypothesis
+    ).parameters
 
 
 def test_record_finding_rejects_unverified_hypothesis(
