@@ -13,6 +13,7 @@ from typing import Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from coordinator.progress import ProgressCallback, notify
 from ledger.init_db import record_run
 from model_router import ModelClient, get_client
 from scope_controller import (
@@ -284,12 +285,30 @@ def _run_attempt(
     resetter: Callable[[], str],
     endpoint_caller: Callable[[str, str, str], dict[str, object]],
     write_evidence: Callable[[str, dict[str, object], str], str],
+    progress: ProgressCallback | None,
 ) -> AttemptResult:
     snapshot_id = resetter()
-    write_evidence(
+    reset_reference = write_evidence(
         "verifier_environment_reset",
         {"verifier_role": verifier_role, "snapshot_id": snapshot_id},
         f"scope-controller://reset_environment/{snapshot_id}",
+    )
+    notify(
+        progress,
+        event_type=f"{verifier_role}.reset_completed",
+        stage=verifier_role,
+        state="completed",
+        logical_role=verifier_role,
+        headline="Fresh synthetic environment prepared",
+        explanation=(
+            "This independent check starts from a separate reset operation. The logical "
+            "state hash identifies equivalent seeded starting data."
+        ),
+        metadata={
+            "reset_id": snapshot_id,
+            "state_hash": snapshot_id.rsplit(":state-sha256:", 1)[-1],
+        },
+        reference=reset_reference,
     )
 
     plan = _parse_plan(
@@ -298,10 +317,28 @@ def _run_attempt(
             response_format=_STRUCTURED_OUTPUT,
         )
     )
-    write_evidence(
+    plan_metadata = _plan_metadata(plan)
+    plan_reference = write_evidence(
         "verifier_plan_proposed",
-        {"verifier_role": verifier_role, "snapshot_id": snapshot_id, **_plan_metadata(plan)},
+        {"verifier_role": verifier_role, "snapshot_id": snapshot_id, **plan_metadata},
         f"verifier://{verifier_role}/plan",
+    )
+    notify(
+        progress,
+        event_type=f"{verifier_role}.plan_validated",
+        stage=verifier_role,
+        state="active",
+        logical_role=verifier_role,
+        headline="Bounded GET-only plan validated",
+        explanation=(
+            "The model proposed a plan, and ordinary validation accepted only the fixed "
+            "accounts and bounded record-read routes."
+        ),
+        metadata={
+            "step_count": plan_metadata["step_count"],
+            "plan_sha256": plan_metadata["plan_sha256"],
+        },
+        reference=plan_reference,
     )
 
     discovered_record_id: str | None = None
@@ -344,6 +381,30 @@ def _run_attempt(
             },
             f"scope-controller://call_app_endpoint/{verifier_role}/{index}",
         )
+        response_metadata = _response_metadata(response)
+        notify(
+            progress,
+            event_type=f"{verifier_role}.call_recorded",
+            stage=verifier_role,
+            state="active",
+            logical_role=verifier_role,
+            headline=f"Bounded call {index} recorded",
+            explanation=(
+                "The scope controller executed one allowed GET call and retained only safe "
+                "presentation metadata for the console."
+            ),
+            metadata={
+                "step_index": index,
+                "account": proposed.account,
+                "method": proposed.method,
+                "proposed_path": proposed.path,
+                "resolved_path": resolved_path,
+                "executed": response is not None,
+                "status_code": response_metadata["status_code"],
+                "body_sha256": response_metadata["body_sha256"],
+            },
+            reference=evidence_reference,
+        )
         executed_steps.append(
             ExecutedStep(
                 method=proposed.method,
@@ -368,6 +429,20 @@ def _run_attempt(
             "matching_step_indexes": list(matching_steps),
         },
         f"verifier://{verifier_role}/deterministic-check",
+    )
+    notify(
+        progress,
+        event_type=f"{verifier_role}.check_completed",
+        stage=verifier_role,
+        state="completed",
+        logical_role=verifier_role,
+        headline="Exact-record predicate evaluated",
+        explanation=reason,
+        metadata={
+            "satisfied": satisfied,
+            "matching_step_indexes": list(matching_steps),
+        },
+        reference=check_reference,
     )
     return AttemptResult(
         verifier_role=verifier_role,
@@ -425,6 +500,7 @@ def run_verifier(
     status_updater: Callable[[str, str, str], None] = update_verification_status,
     finding_recorder: Callable[[str, str, str, str, str], str] = record_finding,
     run_recorder: Callable[..., None] = _record_run,
+    progress: ProgressCallback | None = None,
 ) -> VerificationResult:
     """Run two isolated plans and derive the only allowed verdict in ordinary code."""
     started_at = datetime.now(UTC).isoformat()
@@ -463,6 +539,18 @@ def run_verifier(
                 f"{hypothesis.verification_status!r}"
             )
 
+        notify(
+            progress,
+            event_type="verifier_a.activated",
+            stage="verifier_a",
+            state="active",
+            logical_role="verifier_a",
+            headline="Independent check 1 activated",
+            explanation=(
+                "Verifier A is a logical role executing first. It is not a separate process "
+                "or a simultaneous service."
+            ),
+        )
         first = _run_attempt(
             verifier_role="verifier_a",
             hypothesis=hypothesis,
@@ -470,9 +558,33 @@ def run_verifier(
             resetter=resetter,
             endpoint_caller=endpoint_caller,
             write_evidence=write_evidence,
+            progress=progress,
         )
         snapshot_ids.append(first.snapshot_id)
+        notify(
+            progress,
+            event_type="verifier_a.completed",
+            stage="verifier_a",
+            state="completed",
+            logical_role="verifier_a",
+            headline="Independent check 1 completed",
+            explanation="Verifier A finished before Verifier B was activated.",
+            metadata={"satisfied": first.check.satisfied},
+            reference=first.check.evidence_reference,
+        )
 
+        notify(
+            progress,
+            event_type="verifier_b.activated",
+            stage="verifier_b",
+            state="active",
+            logical_role="verifier_b",
+            headline="Independent check 2 activated",
+            explanation=(
+                "Verifier B now begins from its own fresh reset after Verifier A has "
+                "completed; the attempts are independent and sequential."
+            ),
+        )
         second = _run_attempt(
             verifier_role="verifier_b",
             hypothesis=hypothesis,
@@ -480,12 +592,40 @@ def run_verifier(
             resetter=resetter,
             endpoint_caller=endpoint_caller,
             write_evidence=write_evidence,
+            progress=progress,
         )
         snapshot_ids.append(second.snapshot_id)
+        notify(
+            progress,
+            event_type="verifier_b.completed",
+            stage="verifier_b",
+            state="completed",
+            logical_role="verifier_b",
+            headline="Independent check 2 completed",
+            explanation="Verifier B completed its separately reset bounded reproduction.",
+            metadata={"satisfied": second.check.satisfied},
+            reference=second.check.evidence_reference,
+        )
 
         attempts = (first, second)
+        notify(
+            progress,
+            event_type="consensus.started",
+            stage="consensus",
+            state="active",
+            logical_role="ordinary_code",
+            headline="Code-owned consensus evaluation started",
+            explanation=(
+                "Ordinary Python code compares the two deterministic check results; the "
+                "models do not vote or assign the verdict."
+            ),
+            metadata={
+                "check_1_satisfied": first.check.satisfied,
+                "check_2_satisfied": second.check.satisfied,
+            },
+        )
         verdict = _verdict(first, second)
-        write_evidence(
+        verdict_reference = write_evidence(
             "verifier_final_verdict",
             {
                 "hypothesis_id": hypothesis_id,
@@ -496,6 +636,24 @@ def run_verifier(
             f"verifier://verdict/{hypothesis_id}",
         )
         status_updater(hypothesis_id, verdict, run_id)
+        notify(
+            progress,
+            event_type="consensus.completed",
+            stage="consensus",
+            state="completed",
+            logical_role="ordinary_code",
+            headline=f"Code-owned verdict: {verdict}",
+            explanation=(
+                "Two passes produce verified, two failures produce unverified, and a "
+                "disagreement produces inconclusive. Incomplete execution produces no verdict."
+            ),
+            metadata={
+                "check_1_satisfied": first.check.satisfied,
+                "check_2_satisfied": second.check.satisfied,
+                "verdict": verdict,
+            },
+            reference=verdict_reference,
+        )
 
         finding_id: str | None = None
         if verdict == "verified":
@@ -508,6 +666,20 @@ def run_verifier(
                 _actual_reproduction_steps(attempts),
                 json.dumps(evidence_references),
                 "Enforce an ownership check server-side before returning the record.",
+            )
+            notify(
+                progress,
+                event_type="finding.recorded",
+                stage="consensus",
+                state="completed",
+                logical_role="ordinary_code",
+                headline="Verified finding recorded",
+                explanation=(
+                    "A finding was created only because both deterministic checks passed and "
+                    "the append-only hypothesis status is verified."
+                ),
+                metadata={"finding_id": finding_id, "hypothesis_id": hypothesis_id},
+                reference=f"ledger://finding/{finding_id}",
             )
 
         run_recorder(

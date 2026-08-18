@@ -15,6 +15,26 @@ python -m ui.run_view --run-id <run_id>
 
 The view displays run metadata, ordered evidence events, latest append-only hypothesis revisions, and linked findings. It opens the fixed repository-local ledger in SQLite read-only mode and never starts agents or writes ledger data.
 
+## Live operations console
+
+The Sprint 13 React and TypeScript console lives in `frontend/`. With the existing ignored Groq and Gemini environment loaded into the launch shell, start the fixed loopback services and frontend:
+
+```sh
+docker compose up --build -d
+cd frontend
+npm run dev
+```
+
+Open `http://127.0.0.1:4173/` and choose **Start contained verification run**. The browser supplies no target, provider, credential, prompt, path, or model choice. The coordinator accepts one active canonical run, generates the session ID, and streams code-owned presentation events over same-origin Server-Sent Events. Completed and failed sessions replay from ignored `demo/output/<session_id>/events.jsonl`; the append-only SQLite ledger remains the evidence authority.
+
+The graph reflects real coordinator, mapper, authorization, sequential Verifier A, sequential Verifier B, ordinary-code consensus, and report operations. It does not represent logical roles as parallel processes or services. The final result links to the exact deterministic Sprint 12 static report. Both the app and coordinator remain host-loopback-only: they share one Compose network namespace so the fixed scope-controller origin `http://127.0.0.1:8100` is preserved, while host ports 8000 and 8100 are published only on `127.0.0.1`.
+
+Stop the temporary services when finished:
+
+```sh
+docker compose down
+```
+
 ## Canonical MVP demo
 
 With the existing local Groq and Gemini environment variables loaded (without printing their values) and the local Compose services running, execute:

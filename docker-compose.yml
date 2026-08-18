@@ -3,18 +3,25 @@ services:
     build:
       context: .
       dockerfile: coordinator/Dockerfile
-    ports:
-      - "127.0.0.1:8000:8000"
+    network_mode: "service:app-under-test"
+    depends_on:
+      - app-under-test
     environment:
       LEDGER_DB_PATH: /workspace/data/ledger.db
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     volumes:
       - ./data:/workspace/data
+      - ./app-under-test/data:/workspace/app-under-test/data
+      - ./demo/output:/workspace/demo/output
+      - ./reports/output:/workspace/reports/output
 
   app-under-test:
     build:
       context: ./app-under-test
     ports:
       - "127.0.0.1:8100:8100"
+      - "127.0.0.1:8000:8000"
     environment:
       APP_DB_PATH: /workspace/data/demo_app.db
     volumes:

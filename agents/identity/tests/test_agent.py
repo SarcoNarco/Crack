@@ -130,3 +130,36 @@ def test_identity_agent_never_exceeds_two_endpoint_calls(tmp_path: Path) -> None
         ("GET", "/records/note-account-b-001", "token-account-a-fixed"),
     ]
     assert all(method == "GET" and path != "/login" for method, path, _ in calls)
+
+
+def test_progress_observer_failure_does_not_change_identity_result(tmp_path: Path) -> None:
+    client = FakeClient([
+        _plan(),
+        json.dumps({
+            "concise_claim": "Account A can read Account B's record",
+            "expected_evidence": "The exact Account B record is returned to Account A.",
+        }),
+    ])
+
+    def call(_method: str, path: str, _token: str) -> dict[str, object]:
+        if path == "/records/mine":
+            return _account_b_records()
+        return {
+            "status_code": 200,
+            "body": {"id": "note-account-b-001", "owner_account_id": "account-b"},
+        }
+
+    def broken_observer(**_event: object) -> None:
+        raise RuntimeError("presentation unavailable")
+
+    result = run_identity(
+        client=client,
+        contract_path=_contract_path(tmp_path),
+        endpoint_caller=call,
+        evidence_recorder=lambda **_kwargs: None,
+        hypothesis_submitter=lambda *_args: "hyp-123",
+        run_recorder=lambda **_kwargs: None,
+        progress=broken_observer,
+    )
+
+    assert result.hypothesis_ids == ["hyp-123"]

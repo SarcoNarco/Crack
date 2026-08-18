@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from coordinator.demo import DemoDependencies, run_demo
 
 
@@ -107,3 +109,71 @@ def test_module_has_no_configurable_target_or_shell_surface() -> None:
     source = Path(__file__).resolve().parents[1].joinpath("demo.py").read_text(encoding="utf-8")
     assert "subprocess" not in source and "os.system" not in source
     assert "target_host" not in source and "provider_url" not in source
+
+
+def test_internal_session_override_cannot_traverse_output_root(tmp_path: Path) -> None:
+    deps, _calls = _dependencies(tmp_path)
+    with pytest.raises(ValueError, match="server-generated"):
+        run_demo(dependencies=deps, output_root=tmp_path, session_id="../../reports/output")
+
+
+def test_coordinator_progress_is_ordered_at_real_stage_boundaries(tmp_path: Path) -> None:
+    deps, _calls = _dependencies(tmp_path)
+    events: list[str] = []
+    result = run_demo(
+        dependencies=deps,
+        output_root=tmp_path / "demo",
+        database_path=tmp_path / "ledger.db",
+        emit=lambda _text: None,
+        progress=lambda **event: events.append(str(event["event_type"])),
+    )
+
+    assert result.exit_code == 0
+    expected = [
+        "preflight.started", "preflight.completed", "mapper.activated", "mapper.completed",
+        "identity_reset.started", "identity_reset.completed", "identity.activated",
+        "identity.completed", "report.started", "report.generated", "session.completed",
+    ]
+    assert events == expected
+
+
+def test_incomplete_verifier_emits_failure_without_verdict_finding_or_report(tmp_path: Path) -> None:
+    deps, _calls = _dependencies(tmp_path)
+
+    def incomplete_verifier(_hypothesis_id: str, **kwargs: object) -> object:
+        progress = kwargs["progress"]
+        progress(
+            event_type="verifier_a.activated", stage="verifier_a", state="active",
+            logical_role="verifier_a", headline="Independent check 1 activated",
+            explanation="The first sequential logical role started.", metadata={}, reference=None,
+        )
+        progress(
+            event_type="verifier_a.completed", stage="verifier_a", state="completed",
+            logical_role="verifier_a", headline="Independent check 1 completed",
+            explanation="The first sequential logical role completed.",
+            metadata={"satisfied": True}, reference="verifier://verifier_a/check",
+        )
+        progress(
+            event_type="verifier_b.activated", stage="verifier_b", state="active",
+            logical_role="verifier_b", headline="Independent check 2 activated",
+            explanation="The second sequential logical role started.", metadata={}, reference=None,
+        )
+        raise RuntimeError("raw provider response that must not reach the browser")
+
+    deps = DemoDependencies(**{**deps.__dict__, "verifier": incomplete_verifier})
+    events: list[dict[str, object]] = []
+    result = run_demo(
+        dependencies=deps,
+        output_root=tmp_path / "demo",
+        emit=lambda _text: None,
+        progress=lambda **event: events.append(event),
+    )
+
+    assert result.exit_code == 2 and result.verdict is None and result.finding_id is None
+    assert events[-1]["event_type"] == "session.failed"
+    assert events[-1]["stage"] == "verifier_b"
+    assert "raw provider response" not in json.dumps(events)
+    assert not any(
+        event["event_type"] in {"consensus.completed", "finding.recorded", "report.generated"}
+        for event in events
+    )

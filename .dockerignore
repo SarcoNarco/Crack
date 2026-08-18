@@ -1,0 +1,14 @@
+.git
+.gitignore
+**/.env
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+data/
+app-under-test/data/
+demo/output/
+reports/output/
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+**/*.png

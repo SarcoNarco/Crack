@@ -6,3 +6,7 @@ data/*.db-*
 reports/output/
 demo/output/
 .env
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/*.tsbuildinfo

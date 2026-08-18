@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from coordinator.progress import ProgressCallback, notify
 from ledger.init_db import record_run
 from model_router import ModelClient, get_client
 from scope_controller import call_app_endpoint, record_evidence, submit_hypothesis
@@ -237,6 +238,7 @@ def run_identity(
     evidence_recorder: Callable[..., None] = record_evidence,
     hypothesis_submitter: Callable[[str, str, str, str], str] = submit_hypothesis,
     run_recorder: Callable[..., None] = _record_run,
+    progress: ProgressCallback | None = None,
 ) -> IdentityRunResult:
     """Execute one LLM-planned pass, with a hard cap of five app calls."""
     started_at = datetime.now(UTC).isoformat()
@@ -284,6 +286,24 @@ def run_identity(
             artifact_reference=f"scope-controller://call_app_endpoint/GET{discovery_route.path}",
             policy_decision="allowed",
         )
+        notify(
+            progress,
+            event_type="identity.account_b_discovery",
+            stage="authorization",
+            state="completed",
+            logical_role="identity",
+            headline="Account B record discovery completed",
+            explanation=(
+                "The authorization tester used the fixed Account B identity to list only "
+                "that synthetic account's records."
+            ),
+            metadata={
+                "status_code": discovery_status if isinstance(discovery_status, int) else None,
+                "record_id": account_b_record_id,
+                "owner_account": "account_b" if account_b_record_id else None,
+            },
+            reference=f"scope-controller://call_app_endpoint/GET{discovery_route.path}",
+        )
 
         if account_b_record_id is not None:
             boundary_path = boundary_route.path.replace("{record_id}", account_b_record_id)
@@ -306,6 +326,33 @@ def run_identity(
                 artifact_reference=f"scope-controller://call_app_endpoint/GET{boundary_path}",
                 policy_decision="allowed",
             )
+            returned_id = _safe_record_id(str(_find_first(boundary_response.get("body"), {"id", "record_id"})))
+            returned_owner = _find_first(
+                boundary_response.get("body"),
+                {"owner", "owner_id", "owner_account_id", "account", "account_id"},
+            )
+            notify(
+                progress,
+                event_type="identity.account_a_retrieval",
+                stage="authorization",
+                state="completed",
+                logical_role="identity",
+                headline="Account A cross-account retrieval completed",
+                explanation=(
+                    "The tester requested the exact Account B record through the fixed "
+                    "Account A identity and recorded the safe result metadata."
+                ),
+                metadata={
+                    "status_code": boundary_status if isinstance(boundary_status, int) else None,
+                    "requested_record_id": account_b_record_id,
+                    "returned_record_id": returned_id,
+                    "returned_owner": (
+                        "account_b" if _normalise_identity(returned_owner) == "accountb" else "other"
+                    ),
+                    "exact_record_match": boundary_result.startswith("boundary violation"),
+                },
+                reference=f"scope-controller://call_app_endpoint/GET{boundary_path}",
+            )
 
             if boundary_result.startswith("boundary violation"):
                 wording = _parse_model_json(
@@ -326,6 +373,20 @@ def run_identity(
                 )
                 hypothesis_ids.append(hypothesis_id)
                 hypothesis_claims.append(wording.concise_claim)
+                notify(
+                    progress,
+                    event_type="hypothesis.created",
+                    stage="authorization",
+                    state="completed",
+                    logical_role="identity",
+                    headline="Unverified authorization hypothesis created",
+                    explanation=(
+                        "A hypothesis was recorded only after the bounded Account A request "
+                        "returned the exact Account B-owned record."
+                    ),
+                    metadata={"hypothesis_id": hypothesis_id},
+                    reference=f"ledger://hypothesis/{hypothesis_id}",
+                )
 
         run_recorder(run_id=run_id, started_at=started_at, status="completed", app_version=app_version)
         return IdentityRunResult(run_id, tests, hypothesis_ids, hypothesis_claims, False)

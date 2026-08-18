@@ -152,6 +152,7 @@ class MalformedClient(FakeClient):
 
 def _run(
     success_by_attempt: tuple[bool, bool],
+    progress=None,
 ) -> tuple[object, dict[str, object]]:
     trace: list[str] = []
     reset_count = 0
@@ -207,6 +208,7 @@ def _run(
         status_updater=lambda *args: statuses.append(args),
         finding_recorder=lambda *args: findings.append(args) or "finding-123",
         run_recorder=lambda **kwargs: runs.append(kwargs),
+        progress=progress,
     )
     context = {
         "trace": trace,
@@ -279,6 +281,24 @@ def test_each_attempt_resets_first_and_uses_independent_identical_state() -> Non
     assert client_a.kwargs == client_b.kwargs == [
         {"response_format": {"type": "json_object"}}
     ]
+
+
+def test_progress_follows_real_sequential_boundaries_and_cannot_change_verdict() -> None:
+    events: list[str] = []
+
+    def observer(**event: object) -> None:
+        events.append(str(event["event_type"]))
+        if event["event_type"] == "verifier_a.call_recorded":
+            raise RuntimeError("presentation unavailable")
+
+    result, _context = _run((True, True), progress=observer)
+
+    assert result.verdict == "verified"
+    assert events.index("verifier_a.completed") < events.index("verifier_b.activated")
+    assert events.index("verifier_b.completed") < events.index("consensus.started")
+    assert events[-2:] == ["consensus.completed", "finding.recorded"]
+    assert events.count("verifier_a.call_recorded") == 2
+    assert events.count("verifier_b.call_recorded") == 2
 
 
 @pytest.mark.parametrize("client_type", [FailingClient, MalformedClient])
