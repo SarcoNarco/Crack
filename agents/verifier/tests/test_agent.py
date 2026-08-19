@@ -5,13 +5,14 @@ import json
 import pytest
 
 from agents.verifier.agent import ExecutedStep, deterministic_boundary_check, run_verifier
+from agents.workflow.agent import WORKFLOW_APP_RULE
 
 
 HYPOTHESIS_ID = "hypothesis-account-boundary"
 HYPOTHESIS = {
     "id": HYPOTHESIS_ID,
     "submitted_by_run": "identity:one",
-    "affected_app_rule": "GET /records/{record_id} enforces ownership",
+    "affected_app_rule": "GET /records/{record_id} must enforce record ownership",
     "concise_claim": "Account A can read Account B's record",
     "expected_evidence": (
         "Account B discovers its record and Account A receives that record successfully"
@@ -28,6 +29,23 @@ PLAN = json.dumps(
                 "path": "/records/{record_id}",
                 "account": "account_a",
             },
+        ]
+    }
+)
+WORKFLOW_HYPOTHESIS = {
+    "id": "hypothesis-workflow-rule",
+    "submitted_by_run": "workflow:one",
+    "affected_app_rule": WORKFLOW_APP_RULE,
+    "concise_claim": "A draft work item can be published without approval.",
+    "expected_evidence": "Account A lists a draft item then receives a published result.",
+    "verification_status": "unverified",
+    "verifier_run_id": None,
+}
+WORKFLOW_PLAN = json.dumps(
+    {
+        "steps": [
+            {"operation": "list_owned_work_items"},
+            {"operation": "publish_work_item"},
         ]
     }
 )
@@ -358,3 +376,94 @@ def test_incomplete_second_provider_attempt_fails_closed_without_verdict_or_find
     assert runs[-1]["status"] == "failed"
     assert "plan:verifier_a" in trace
     assert "plan:verifier_b" in trace
+
+
+@pytest.mark.parametrize(
+    ("success_by_attempt", "expected_verdict"),
+    [((True, True), "verified"), ((False, False), "unverified"), ((True, False), "inconclusive")],
+)
+def test_workflow_verifier_uses_two_clean_resets_and_code_owned_verdict(
+    success_by_attempt: tuple[bool, bool], expected_verdict: str
+) -> None:
+    trace: list[str] = []
+    reset_count = 0
+    statuses: list[tuple[str, str, str]] = []
+    findings: list[tuple[str, str, str, str, str]] = []
+    evidence: list[dict[str, object]] = []
+
+    class WorkflowClient(FakeClient):
+        def complete(self, messages: list[dict[str, str]], **kwargs: object) -> str:
+            self.trace.append(f"plan:{self.role}")
+            self.messages.append(messages)
+            self.kwargs.append(kwargs)
+            return WORKFLOW_PLAN
+
+    def reset() -> str:
+        nonlocal reset_count
+        reset_count += 1
+        trace.append(f"reset:{reset_count}")
+        return f"reset:workflow-{reset_count}:state-sha256:complete-identical"
+
+    def call(method: str, path: str, token: str) -> dict[str, object]:
+        trace.append(f"call:{reset_count}:{method}:{path}:{token}")
+        assert token == "token-account-a-fixed"
+        if method == "GET":
+            assert path == "/work-items/mine"
+            return {"status_code": 200, "body": {"work_items": [{"id": "release-account-a-001", "owner_account_id": "account-a", "state": "draft"}]}}
+        assert method == "POST"
+        assert path == "/work-items/release-account-a-001/publish"
+        if success_by_attempt[reset_count - 1]:
+            return {"status_code": 200, "body": {"id": "release-account-a-001", "previous_state": "draft", "state": "published"}}
+        return {"status_code": 409, "body": {"detail": "Approval required"}}
+
+    result = run_verifier(
+        WORKFLOW_HYPOTHESIS["id"],
+        client_a=WorkflowClient("verifier_a", trace),
+        client_b=WorkflowClient("verifier_b", trace),
+        hypothesis_reader=lambda _id: WORKFLOW_HYPOTHESIS,
+        resetter=reset,
+        endpoint_caller=call,
+        evidence_recorder=lambda **kwargs: evidence.append(kwargs),
+        status_updater=lambda *args: statuses.append(args),
+        finding_recorder=lambda *args: findings.append(args) or "workflow-finding",
+        run_recorder=lambda **_kwargs: None,
+    )
+
+    assert result.verdict == expected_verdict
+    assert reset_count == 2
+    assert result.attempts[0].snapshot_id != result.attempts[1].snapshot_id
+    assert {attempt.snapshot_id.rsplit(":state-sha256:", 1)[1] for attempt in result.attempts} == {"complete-identical"}
+    assert all("GET" in entry or "POST" in entry for entry in trace if entry.startswith("call:"))
+    assert statuses[0][1] == expected_verdict
+    assert (len(findings) == 1) is (expected_verdict == "verified")
+    plan_events = [event for event in evidence if event["action_type"] == "verifier_plan_proposed"]
+    assert [json.loads(event["request_response_summary"])["steps"] for event in plan_events] == [
+        [{"operation": "list_owned_work_items"}, {"operation": "publish_work_item"}],
+        [{"operation": "list_owned_work_items"}, {"operation": "publish_work_item"}],
+    ]
+
+
+def test_workflow_schema_failure_creates_no_status_or_finding() -> None:
+    statuses: list[tuple[str, str, str]] = []
+    findings: list[tuple[str, str, str, str, str]] = []
+
+    class InvalidWorkflowClient(FakeClient):
+        def complete(self, *_args: object, **_kwargs: object) -> str:
+            return json.dumps({"steps": [{"operation": "publish_work_item"}, {"operation": "list_owned_work_items"}]})
+
+    with pytest.raises(RuntimeError):
+        run_verifier(
+            WORKFLOW_HYPOTHESIS["id"],
+            client_a=InvalidWorkflowClient("verifier_a", []),
+            client_b=InvalidWorkflowClient("verifier_b", []),
+            hypothesis_reader=lambda _id: WORKFLOW_HYPOTHESIS,
+            resetter=lambda: "reset:workflow:state-sha256:complete",
+            endpoint_caller=lambda *_args: {"status_code": 200, "body": {}},
+            evidence_recorder=lambda **_kwargs: None,
+            status_updater=lambda *args: statuses.append(args),
+            finding_recorder=lambda *args: findings.append(args) or "unexpected",
+            run_recorder=lambda **_kwargs: None,
+        )
+
+    assert statuses == []
+    assert findings == []

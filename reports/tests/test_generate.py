@@ -114,6 +114,18 @@ def test_integrity_rejects_inconsistent_finding_and_missing_finding(tmp_path: Pa
         render_markdown(read_run('report-verifier:/unsafe', db))
 
 
+def test_authorization_only_report_rejects_workflow_evidence_without_misreporting(tmp_path: Path) -> None:
+    db = _fixture(tmp_path / 'ledger.db')
+    with sqlite3.connect(db) as connection:
+        connection.execute(
+            "UPDATE hypothesis SET affected_app_rule = 'WORKFLOW: approval is required before publishing a work item' "
+            "WHERE id = 'verified'"
+        )
+
+    with pytest.raises(ReportIntegrityError, match='authorization-only report'):
+        render_html(read_run('report-verifier:/unsafe', db))
+
+
 def test_malformed_reproduction_and_deterministic_output(tmp_path: Path) -> None:
     db, output = _fixture(tmp_path / 'ledger.db'), tmp_path / 'output'
     view = read_run('report-verifier:/unsafe', db)

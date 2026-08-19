@@ -14,6 +14,7 @@ from typing import Callable, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from coordinator.progress import ProgressCallback, notify
+from agents.workflow.agent import WORKFLOW_APP_RULE, deterministic_workflow_check
 from ledger.init_db import record_run
 from model_router import ModelClient, get_client
 from scope_controller import (
@@ -37,9 +38,11 @@ _OWNER_FIELDS = frozenset(
 )
 _ID_FIELDS = frozenset({"id", "record_id"})
 _STRUCTURED_OUTPUT = {"type": "json_object"}
-_DECLARED_SCOPE = (
-    "two independent model-planned, clean-reset GET-only authorization reproductions"
-)
+_AUTHORIZATION_APP_RULE = "GET /records/{record_id} must enforce record ownership"
+_DECLARED_SCOPES = {
+    "authorization": "two independent model-planned, clean-reset GET-only authorization reproductions",
+    "workflow": "two independent model-planned, clean-reset workflow transition reproductions",
+}
 _MAX_PLAN_STEPS = 5
 _PLACEHOLDER_PATH = "/records/{record_id}"
 
@@ -52,6 +55,7 @@ class HypothesisInput(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: str = Field(min_length=1)
+    affected_app_rule: str = Field(min_length=1)
     concise_claim: str = Field(min_length=1)
     expected_evidence: str = Field(min_length=1)
     verification_status: str = Field(min_length=1)
@@ -86,6 +90,29 @@ class ReproductionPlan(BaseModel):
     steps: list[PlanStep] = Field(min_length=1, max_length=_MAX_PLAN_STEPS)
 
 
+class WorkflowPlanStep(BaseModel):
+    """One code-resolved workflow operation, with no model-controlled request fields."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    operation: Literal["list_owned_work_items", "publish_work_item"]
+
+
+class WorkflowReproductionPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    steps: list[WorkflowPlanStep] = Field(min_length=2, max_length=2)
+
+    @field_validator("steps")
+    @classmethod
+    def must_use_the_exact_workflow_operations(
+        cls, value: list[WorkflowPlanStep]
+    ) -> list[WorkflowPlanStep]:
+        if [step.operation for step in value] != ["list_owned_work_items", "publish_work_item"]:
+            raise ValueError("workflow plans must list owned items before publishing one item")
+        return value
+
+
 @dataclass(frozen=True)
 class ExecutedStep:
     method: str
@@ -110,7 +137,7 @@ class DeterministicCheck:
 class AttemptResult:
     verifier_role: str
     snapshot_id: str
-    plan: ReproductionPlan
+    plan: ReproductionPlan | WorkflowReproductionPlan
     executed_steps: tuple[ExecutedStep, ...]
     check: DeterministicCheck
 
@@ -124,7 +151,26 @@ class VerificationResult:
     finding_id: str | None
 
 
-def _planner_prompt(hypothesis: HypothesisInput) -> str:
+def _hypothesis_kind(hypothesis: HypothesisInput) -> Literal["authorization", "workflow"]:
+    if hypothesis.affected_app_rule == _AUTHORIZATION_APP_RULE:
+        return "authorization"
+    if hypothesis.affected_app_rule == WORKFLOW_APP_RULE:
+        return "workflow"
+    raise VerifierError("hypothesis affected_app_rule is not one of the supported code-owned rules")
+
+
+def _planner_prompt(hypothesis: HypothesisInput, kind: Literal["authorization", "workflow"]) -> str:
+    if kind == "workflow":
+        return (
+            "You are independently planning one contained workflow reproduction. You plan calls only; "
+            "you do not judge the result. Return only JSON exactly shaped as "
+            '{"steps":[{"operation":"list_owned_work_items"},{"operation":"publish_work_item"}]}. '
+            "The first operation lists Account A-owned work items. The second publishes the exact draft "
+            "item that ordinary code identified. Do not provide routes, methods, accounts, item IDs, states, "
+            "hosts, credentials, conclusions, prose, or extra JSON fields.\n\n"
+            f"CONCISE CLAIM:\n{hypothesis.concise_claim}\n\n"
+            f"EXPECTED EVIDENCE:\n{hypothesis.expected_evidence}"
+        )
     return (
         "You are independently planning a reproduction attempt in a contained demo notes app. "
         "You plan calls only; you do not judge whether the attempt succeeds. Return only JSON "
@@ -140,13 +186,16 @@ def _planner_prompt(hypothesis: HypothesisInput) -> str:
     )
 
 
-def _parse_plan(raw_response: str) -> ReproductionPlan:
+def _parse_plan(
+    raw_response: str, kind: Literal["authorization", "workflow"]
+) -> ReproductionPlan | WorkflowReproductionPlan:
     fenced = re.fullmatch(
         r"\s*```(?:json)?\s*\n?(.*?)\n?```\s*", raw_response, re.DOTALL
     )
     document = fenced.group(1) if fenced else raw_response
     try:
-        return ReproductionPlan.model_validate_json(document)
+        schema = ReproductionPlan if kind == "authorization" else WorkflowReproductionPlan
+        return schema.model_validate_json(document)
     except (ValidationError, ValueError) as exc:
         raise VerifierError("model response did not match the bounded verifier plan schema") from exc
 
@@ -249,7 +298,7 @@ def _response_metadata(response: dict[str, object] | None) -> dict[str, object]:
     return metadata
 
 
-def _plan_metadata(plan: ReproductionPlan) -> dict[str, object]:
+def _plan_metadata(plan: ReproductionPlan | WorkflowReproductionPlan) -> dict[str, object]:
     steps = [step.model_dump() for step in plan.steps]
     encoded = json.dumps(steps, sort_keys=True).encode()
     return {
@@ -260,14 +309,14 @@ def _plan_metadata(plan: ReproductionPlan) -> dict[str, object]:
 
 
 def _record_run(
-    *, run_id: str, started_at: str, status: str, snapshot_ids: list[str]
+    *, run_id: str, started_at: str, status: str, snapshot_ids: list[str], kind: str = "authorization"
 ) -> None:
     record_run(
         run_id=run_id,
         app_version="sprint-1-seeded-demo-app",
         environment_snapshot_id=json.dumps(snapshot_ids),
         agent_role="verifier",
-        declared_scope=_DECLARED_SCOPE,
+        declared_scope=_DECLARED_SCOPES[kind],
         start_time=started_at,
         end_time=datetime.now(UTC).isoformat(),
         token_budget=0,
@@ -281,6 +330,7 @@ def _run_attempt(
     *,
     verifier_role: str,
     hypothesis: HypothesisInput,
+    kind: Literal["authorization", "workflow"],
     client: ModelClient,
     resetter: Callable[[], str],
     endpoint_caller: Callable[[str, str, str], dict[str, object]],
@@ -313,9 +363,10 @@ def _run_attempt(
 
     plan = _parse_plan(
         client.complete(
-            [{"role": "user", "content": _planner_prompt(hypothesis)}],
+            [{"role": "user", "content": _planner_prompt(hypothesis, kind)}],
             response_format=_STRUCTURED_OUTPUT,
-        )
+        ),
+        kind,
     )
     plan_metadata = _plan_metadata(plan)
     plan_reference = write_evidence(
@@ -329,10 +380,18 @@ def _run_attempt(
         stage=verifier_role,
         state="active",
         logical_role=verifier_role,
-        headline="Bounded GET-only plan validated",
+        headline=(
+            "Bounded GET-only plan validated"
+            if kind == "authorization"
+            else "Bounded workflow-operation plan validated"
+        ),
         explanation=(
             "The model proposed a plan, and ordinary validation accepted only the fixed "
-            "accounts and bounded record-read routes."
+            + (
+                "accounts and bounded record-read routes."
+                if kind == "authorization"
+                else "workflow operations."
+            )
         ),
         metadata={
             "step_count": plan_metadata["step_count"],
@@ -342,28 +401,70 @@ def _run_attempt(
     )
 
     discovered_record_id: str | None = None
+    discovered_work_item_id: str | None = None
     executed_steps: list[ExecutedStep] = []
     for index, proposed in enumerate(plan.steps, start=1):
-        resolved_path = proposed.path
-        if proposed.path == _PLACEHOLDER_PATH:
+        if kind == "authorization":
+            assert isinstance(proposed, PlanStep)
+            method, account, proposed_path = proposed.method, proposed.account, proposed.path
+            resolved_path = proposed_path
+            if proposed_path == _PLACEHOLDER_PATH:
+                resolved_path = (
+                    proposed_path.replace("{record_id}", discovered_record_id)
+                    if discovered_record_id
+                    else None
+                )
+        else:
+            assert isinstance(proposed, WorkflowPlanStep)
+            method, account = (
+                ("GET", "account_a")
+                if proposed.operation == "list_owned_work_items"
+                else ("POST", "account_a")
+            )
+            proposed_path = (
+                "/work-items/mine"
+                if proposed.operation == "list_owned_work_items"
+                else "/work-items/{work_item_id}/publish"
+            )
             resolved_path = (
-                proposed.path.replace("{record_id}", discovered_record_id)
-                if discovered_record_id
-                else None
+                "/work-items/mine"
+                if proposed.operation == "list_owned_work_items"
+                else (
+                    f"/work-items/{discovered_work_item_id}/publish"
+                    if discovered_work_item_id
+                    else None
+                )
             )
 
         response: dict[str, object] | None = None
         if resolved_path is None:
-            result = "not executed: no Account B record ID was available for the placeholder"
-        else:
-            response = endpoint_caller(
-                proposed.method, resolved_path, _ACCOUNT_TOKENS[proposed.account]
+            result = (
+                "not executed: no Account B record ID was available for the placeholder"
+                if kind == "authorization"
+                else "not executed: no Account A draft work-item ID was available"
             )
+        else:
+            response = endpoint_caller(method, resolved_path, _ACCOUNT_TOKENS[account])
             result = "executed"
-            if proposed.account == "account_b":
+            if kind == "authorization" and account == "account_b":
                 discovered_record_id = (
                     _discover_account_b_record_id(response) or discovered_record_id
                 )
+            if kind == "workflow" and proposed_path == "/work-items/mine":
+                body = response.get("body")
+                if isinstance(body, dict) and isinstance(body.get("work_items"), list):
+                    for item in body["work_items"]:
+                        if not isinstance(item, dict):
+                            continue
+                        candidate = item.get("id")
+                        if (
+                            item.get("owner_account_id") == "account-a"
+                            and item.get("state") == "draft"
+                            and isinstance(candidate, str)
+                            and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", candidate)
+                        ):
+                            discovered_work_item_id = candidate
+                            break
 
         evidence_reference = write_evidence(
             "verifier_call_result",
@@ -371,10 +472,10 @@ def _run_attempt(
                 "verifier_role": verifier_role,
                 "snapshot_id": snapshot_id,
                 "step_index": index,
-                "method": proposed.method,
-                "proposed_path": proposed.path,
+                "method": method,
+                "proposed_path": proposed_path,
                 "resolved_path": resolved_path,
-                "account": proposed.account,
+                "account": account,
                 "executed": response is not None,
                 "result": result,
                 "response": _response_metadata(response),
@@ -390,14 +491,14 @@ def _run_attempt(
             logical_role=verifier_role,
             headline=f"Bounded call {index} recorded",
             explanation=(
-                "The scope controller executed one allowed GET call and retained only safe "
+                "The scope controller executed one bounded allowed call and retained only safe "
                 "presentation metadata for the console."
             ),
             metadata={
                 "step_index": index,
-                "account": proposed.account,
-                "method": proposed.method,
-                "proposed_path": proposed.path,
+                "account": account,
+                "method": method,
+                "proposed_path": proposed_path,
                 "resolved_path": resolved_path,
                 "executed": response is not None,
                 "status_code": response_metadata["status_code"],
@@ -407,10 +508,10 @@ def _run_attempt(
         )
         executed_steps.append(
             ExecutedStep(
-                method=proposed.method,
-                proposed_path=proposed.path,
+                method=method,
+                proposed_path=proposed_path,
                 resolved_path=resolved_path,
-                account=proposed.account,
+                account=account,
                 executed=response is not None,
                 response=response,
                 result=result,
@@ -418,7 +519,15 @@ def _run_attempt(
             )
         )
 
-    satisfied, reason, matching_steps = deterministic_boundary_check(tuple(executed_steps))
+    if kind == "authorization":
+        satisfied, reason, matching_steps = deterministic_boundary_check(tuple(executed_steps))
+    else:
+        listed = executed_steps[0].response if executed_steps else None
+        published = executed_steps[1].response if len(executed_steps) > 1 else None
+        satisfied, reason = deterministic_workflow_check(
+            listed, published, discovered_work_item_id
+        )
+        matching_steps = (2,) if satisfied else ()
     check_reference = write_evidence(
         "verifier_deterministic_check",
         {
@@ -436,7 +545,11 @@ def _run_attempt(
         stage=verifier_role,
         state="completed",
         logical_role=verifier_role,
-        headline="Exact-record predicate evaluated",
+        headline=(
+            "Exact-record predicate evaluated"
+            if kind == "authorization"
+            else "Workflow-transition predicate evaluated"
+        ),
         explanation=reason,
         metadata={
             "satisfied": satisfied,
@@ -538,6 +651,7 @@ def run_verifier(
                 f"hypothesis {hypothesis_id!r} is not unverified; latest status is "
                 f"{hypothesis.verification_status!r}"
             )
+        kind = _hypothesis_kind(hypothesis)
 
         notify(
             progress,
@@ -554,6 +668,7 @@ def run_verifier(
         first = _run_attempt(
             verifier_role="verifier_a",
             hypothesis=hypothesis,
+            kind=kind,
             client=client_a or get_client("verifier_a"),
             resetter=resetter,
             endpoint_caller=endpoint_caller,
@@ -588,6 +703,7 @@ def run_verifier(
         second = _run_attempt(
             verifier_role="verifier_b",
             hypothesis=hypothesis,
+            kind=kind,
             client=client_b or get_client("verifier_b"),
             resetter=resetter,
             endpoint_caller=endpoint_caller,
@@ -661,11 +777,18 @@ def run_verifier(
                 hypothesis_id,
                 (
                     "High impact: two independent clean-reset attempts demonstrated that "
+                    "a draft work item can bypass its required approval state."
+                    if kind == "workflow"
+                    else "High impact: two independent clean-reset attempts demonstrated that "
                     "Account A can read a record owned by another account."
                 ),
                 _actual_reproduction_steps(attempts),
                 json.dumps(evidence_references),
-                "Enforce an ownership check server-side before returning the record.",
+                (
+                    "Require the approved state server-side before publishing a work item."
+                    if kind == "workflow"
+                    else "Enforce an ownership check server-side before returning the record."
+                ),
             )
             notify(
                 progress,
@@ -687,6 +810,7 @@ def run_verifier(
             started_at=started_at,
             status="completed",
             snapshot_ids=snapshot_ids,
+            kind=kind,
         )
         return VerificationResult(run_id, hypothesis_id, attempts, verdict, finding_id)
     except Exception:
@@ -695,5 +819,6 @@ def run_verifier(
             started_at=started_at,
             status="failed",
             snapshot_ids=snapshot_ids,
+            kind=locals().get("kind", "authorization"),
         )
         raise

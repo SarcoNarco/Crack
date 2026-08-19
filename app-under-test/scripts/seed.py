@@ -23,10 +23,20 @@ RECORDS = (
     ),
 )
 
+WORK_ITEMS = (
+    (
+        "release-account-a-001",
+        "account-a",
+        "Account A release checklist",
+        "draft",
+    ),
+)
+
 
 def seed() -> None:
     initialize_database()
     with connect() as connection:
+        connection.execute("DELETE FROM work_items")
         connection.execute("DELETE FROM records")
         connection.execute("DELETE FROM accounts")
         connection.executemany(
@@ -35,6 +45,10 @@ def seed() -> None:
         )
         connection.executemany(
             "INSERT INTO records (id, owner_account_id, title, body) VALUES (?, ?, ?, ?)", RECORDS
+        )
+        connection.executemany(
+            "INSERT INTO work_items (id, owner_account_id, title, state) VALUES (?, ?, ?, ?)",
+            WORK_ITEMS,
         )
 
 
