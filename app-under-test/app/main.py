@@ -76,6 +76,51 @@ def get_my_records(account: dict[str, str] = Depends(current_account)) -> dict[s
     return {"records": [dict(record) for record in records]}
 
 
+def _owned_work_item(work_item_id: str, account_id: str):
+    with connect() as connection:
+        item = connection.execute(
+            "SELECT id, owner_account_id, title, state FROM work_items WHERE id = ? AND owner_account_id = ?",
+            (work_item_id, account_id),
+        ).fetchone()
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work item not found")
+    return dict(item)
+
+
+@app.get("/work-items/mine")
+def get_my_work_items(account: dict[str, str] = Depends(current_account)) -> dict[str, list[dict[str, str]]]:
+    """Return the caller's workflow items for ordinary in-app navigation."""
+    with connect() as connection:
+        items = connection.execute(
+            "SELECT id, owner_account_id, title, state FROM work_items WHERE owner_account_id = ? ORDER BY id",
+            (account["id"],),
+        ).fetchall()
+    return {"work_items": [dict(item) for item in items]}
+
+
+@app.post("/work-items/{work_item_id}/approve")
+def approve_work_item(work_item_id: str, account: dict[str, str] = Depends(current_account)) -> dict[str, str]:
+    """Advance only a draft work item to approved."""
+    item = _owned_work_item(work_item_id, account["id"])
+    if item["state"] != "draft":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only draft work items can be approved")
+    with connect() as connection:
+        connection.execute("UPDATE work_items SET state = 'approved' WHERE id = ?", (work_item_id,))
+    return {"id": work_item_id, "previous_state": "draft", "state": "approved"}
+
+
+@app.post("/work-items/{work_item_id}/publish")
+def publish_work_item(work_item_id: str, account: dict[str, str] = Depends(current_account)) -> dict[str, str]:
+    """Publish an owned item; intentionally missing the required approved-state check."""
+    item = _owned_work_item(work_item_id, account["id"])
+    if item["state"] == "published":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Published work items are terminal")
+    # Intentional Sprint 7 defect: a draft item incorrectly bypasses approval here.
+    with connect() as connection:
+        connection.execute("UPDATE work_items SET state = 'published' WHERE id = ?", (work_item_id,))
+    return {"id": work_item_id, "previous_state": item["state"], "state": "published"}
+
+
 @app.get("/records/{record_id}")
 def get_record(record_id: str, _: dict[str, str] = Depends(current_account)) -> dict[str, str]:
     """Return a note after confirming the caller has an authenticated session."""

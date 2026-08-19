@@ -152,6 +152,10 @@ def _validate(view: RunView) -> tuple[dict[str, Finding], tuple[Hypothesis, ...]
     if view.run.status != "completed":
         raise ReportIntegrityError(f"verifier run is not completed: {view.run.id}")
     latest = {hypothesis.id: hypothesis for hypothesis in view.hypotheses}
+    if any(hypothesis.affected_app_rule.startswith("WORKFLOW:") for hypothesis in latest.values()):
+        raise ReportIntegrityError(
+            "workflow verifier evidence is intentionally unsupported by this authorization-only report"
+        )
     findings: dict[str, Finding] = {}
     for finding in view.findings:
         hypothesis = latest.get(finding.hypothesis_id)

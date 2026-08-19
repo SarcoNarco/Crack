@@ -83,6 +83,55 @@ def test_call_app_endpoint_rejects_non_allowlisted_token() -> None:
         scope_controller.call_app_endpoint("GET", "/health", "real-or-stolen-token")
 
 
+def test_call_app_endpoint_supports_only_the_fixed_workflow_post_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class Response:
+        status = 200
+
+        def read(self) -> bytes:
+            return b'{"id":"release-account-a-001","state":"published"}'
+
+        def getheader(self, _name: str, _default: str = "") -> str:
+            return "application/json"
+
+        def getheaders(self) -> list[tuple[str, str]]:
+            return [("Content-Type", "application/json")]
+
+    class Connection:
+        def __init__(self, host: str, port: int, timeout: int) -> None:
+            captured.update({"host": host, "port": port, "timeout": timeout})
+
+        def request(self, method: str, path: str, **kwargs: object) -> None:
+            captured.update({"method": method, "path": path, **kwargs})
+
+        def getresponse(self) -> Response:
+            return Response()
+
+        def close(self) -> None:
+            captured["closed"] = True
+
+    monkeypatch.setattr(_gateway._http_client, "HTTPConnection", Connection)
+
+    response = scope_controller.call_app_endpoint(
+        "POST", "/work-items/release-account-a-001/publish", DEMO_TOKEN_A
+    )
+
+    assert captured == {
+        "host": "127.0.0.1",
+        "port": 8100,
+        "timeout": 5,
+        "method": "POST",
+        "path": "/work-items/release-account-a-001/publish",
+        "headers": {"Authorization": "Bearer token-account-a-fixed"},
+        "closed": True,
+    }
+    assert response["status_code"] == 200
+    assert "body" not in inspect.signature(scope_controller.call_app_endpoint).parameters
+
+
 @pytest.mark.parametrize(
     "path",
     [
@@ -126,7 +175,8 @@ def test_reset_environment_calls_fixed_seed_and_ignores_environment_path(
     with sqlite3.connect(_gateway._APP_DATABASE_PATH) as connection:
         accounts = connection.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
         records = connection.execute("SELECT COUNT(*) FROM records").fetchone()[0]
-    assert (accounts, records) == (2, 2)
+        work_items = connection.execute("SELECT id, state FROM work_items ORDER BY id").fetchall()
+    assert (accounts, records, work_items) == (2, 2, [("release-account-a-001", "draft")])
     assert snapshot_id.startswith("reset:")
     assert ":state-sha256:" in snapshot_id
 
@@ -139,6 +189,18 @@ def test_each_reset_has_a_unique_id_for_the_same_seeded_state() -> None:
     assert first.rsplit(":state-sha256:", 1)[1] == second.rsplit(
         ":state-sha256:", 1
     )[1]
+
+
+def test_logical_state_hash_changes_when_workflow_state_changes() -> None:
+    scope_controller.reset_environment()
+    before = _gateway._seeded_state_hash()
+    try:
+        with sqlite3.connect(_gateway._APP_DATABASE_PATH) as connection:
+            connection.execute("UPDATE work_items SET state = 'approved' WHERE id = 'release-account-a-001'")
+
+        assert _gateway._seeded_state_hash() != before
+    finally:
+        scope_controller.reset_environment()
 
 
 def test_reset_environment_accepts_no_command_argument() -> None:

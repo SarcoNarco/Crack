@@ -187,8 +187,11 @@ def _seeded_state_hash() -> str:
         records = connection.execute(
             "SELECT id, owner_account_id, title, body FROM records ORDER BY id"
         ).fetchall()
+        work_items = connection.execute(
+            "SELECT id, owner_account_id, title, state FROM work_items ORDER BY id"
+        ).fetchall()
     logical_state = _json.dumps(
-        {"accounts": accounts, "records": records},
+        {"accounts": accounts, "records": records, "work_items": work_items},
         separators=(",", ":"),
         sort_keys=True,
     ).encode()

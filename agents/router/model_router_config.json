@@ -16,7 +16,7 @@
   "roles": {
     "mapper": {"provider": "groq", "model": "openai/gpt-oss-20b", "reasoning_effort": "low"},
     "identity": {"provider": "groq", "model": "openai/gpt-oss-120b", "reasoning_effort": "low"},
-    "workflow": {"provider": "groq", "model": "llama-3.3-70b-versatile"},
+    "workflow": {"provider": "groq", "model": "qwen/qwen3.6-27b"},
     "verifier_a": {"provider": "groq", "model": "openai/gpt-oss-120b", "reasoning_effort": "low"},
     "verifier_b": {"provider": "gemini", "model": "gemini-3.5-flash"}
   }

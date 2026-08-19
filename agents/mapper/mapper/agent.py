@@ -7,9 +7,9 @@ import re
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ledger.init_db import record_run
 from model_router import ModelClient, get_client
@@ -29,10 +29,35 @@ class Route(BaseModel):
     description: str = Field(min_length=1)
 
 
+class WorkflowRule(BaseModel):
+    """One contract-declared, bounded business-rule workflow."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rule_id: Literal["approval_before_publish"]
+    account: Literal["account_a"]
+    states: tuple[Literal["draft", "approved", "published"], Literal["draft", "approved", "published"], Literal["draft", "approved", "published"]]
+    list_route: Literal["/work-items/mine"]
+    approve_route: Literal["/work-items/{work_item_id}/approve"]
+    publish_route: Literal["/work-items/{work_item_id}/publish"]
+    required_predecessor: Literal["approved"]
+    invalid_predecessor: Literal["draft"]
+
+    @field_validator("states")
+    @classmethod
+    def states_must_describe_the_only_supported_workflow(
+        cls, value: tuple[str, str, str]
+    ) -> tuple[str, str, str]:
+        if value != ("draft", "approved", "published"):
+            raise ValueError("workflow states must be draft, approved, published in order")
+        return value
+
+
 class AppContract(BaseModel):
     routes: list[Route]
     roles: list[str]
     assumptions: list[str]
+    workflow_rules: list[WorkflowRule] = Field(default_factory=list)
 
 
 class MapperError(RuntimeError):
@@ -50,7 +75,12 @@ def _prompt(context: str, *, strict: bool) -> str:
     schema = (
         'Return only JSON matching exactly: {"routes":[{"method":"GET",'
         '"path":"/example","description":"..."}],"roles":["..."],'
-        '"assumptions":["..."]}. Every route needs all three string fields.'
+        '"assumptions":["..."],"workflow_rules":[]}. Every route needs all three string fields. '
+        'When the source declares /work-items/mine plus approve and publish routes, include exactly '
+        'one workflow rule with rule_id approval_before_publish, account account_a, states '
+        '["draft","approved","published"], list_route /work-items/mine, approve_route '
+        '/work-items/{work_item_id}/approve, publish_route /work-items/{work_item_id}/publish, '
+        'required_predecessor approved, and invalid_predecessor draft.'
     )
     retry = " This is the final retry: do not use Markdown fences or prose." if strict else ""
     return (
@@ -99,8 +129,16 @@ def _record_run(*, run_id: str, started_at: str, status: str, app_version: str) 
 
 
 def _failure_summary(raw_response: str) -> str:
-    """Keep diagnostic evidence bounded while retaining the raw failed response."""
-    return json.dumps({"raw_llm_response": raw_response}, ensure_ascii=False)
+    """Retain only failure metadata; model response text is never evidence."""
+    import hashlib
+
+    return json.dumps(
+        {
+            "raw_response_sha256": hashlib.sha256(raw_response.encode()).hexdigest(),
+            "raw_response_characters": len(raw_response),
+        },
+        sort_keys=True,
+    )
 
 
 def run_mapper(

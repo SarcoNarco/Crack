@@ -35,5 +35,12 @@ def initialize_database() -> None:
                 title TEXT NOT NULL,
                 body TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS work_items (
+                id TEXT PRIMARY KEY,
+                owner_account_id TEXT NOT NULL REFERENCES accounts(id),
+                title TEXT NOT NULL,
+                state TEXT NOT NULL CHECK (state IN ('draft', 'approved', 'published'))
+            );
             """
         )

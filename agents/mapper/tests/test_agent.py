@@ -20,6 +20,17 @@ VALID_CONTRACT = {
     "assumptions": ["The two seeded display names represent the available roles."],
 }
 
+VALID_WORKFLOW_RULE = {
+    "rule_id": "approval_before_publish",
+    "account": "account_a",
+    "states": ["draft", "approved", "published"],
+    "list_route": "/work-items/mine",
+    "approve_route": "/work-items/{work_item_id}/approve",
+    "publish_route": "/work-items/{work_item_id}/publish",
+    "required_predecessor": "approved",
+    "invalid_predecessor": "draft",
+}
+
 
 class FakeClient:
     def __init__(self, responses: list[str]) -> None:
@@ -55,8 +66,11 @@ def test_mapper_successfully_validates_and_writes_contract(
 
     contract = run_mapper(client=client, output_path=output_path)
 
-    assert contract.model_dump() == VALID_CONTRACT
-    assert json.loads(output_path.read_text(encoding="utf-8")) == VALID_CONTRACT
+    assert contract.model_dump() == {**VALID_CONTRACT, "workflow_rules": []}
+    assert json.loads(output_path.read_text(encoding="utf-8")) == {
+        **VALID_CONTRACT,
+        "workflow_rules": [],
+    }
     assert len(client.messages) == 1
     assert client.requests == [{"response_format": {"type": "json_object"}}]
     with sqlite3.connect(temporary_ledger) as connection:
@@ -93,5 +107,44 @@ def test_mapper_records_raw_failure_after_exactly_one_retry(
             "SELECT action_type, request_response_summary, policy_decision FROM event"
         ).fetchone()
     assert event[0] == "app_contract_schema_failure"
-    assert json.loads(event[1]) == {"raw_llm_response": "second raw malformed response"}
+    assert json.loads(event[1]) == {
+        "raw_response_characters": len("second raw malformed response"),
+        "raw_response_sha256": "57f9240c439b59cc83dc798ef46ff904ba4b91a38ff76682d637f289ee4ff93f",
+    }
     assert event[2] == "blocked"
+
+
+def test_mapper_accepts_a_complete_declared_workflow_rule(
+    temporary_ledger: Path, tmp_path: Path
+) -> None:
+    contract_data = {
+        **VALID_CONTRACT,
+        "workflow_rules": [VALID_WORKFLOW_RULE],
+    }
+
+    contract = run_mapper(
+        client=FakeClient([json.dumps(contract_data)]), output_path=tmp_path / "app_contract.json"
+    )
+
+    assert contract.workflow_rules[0].model_dump(mode="json") == VALID_WORKFLOW_RULE
+
+
+@pytest.mark.parametrize(
+    "workflow_rule",
+    [
+        {key: value for key, value in VALID_WORKFLOW_RULE.items() if key != "publish_route"},
+        {**VALID_WORKFLOW_RULE, "states": ["approved", "draft", "published"]},
+        {**VALID_WORKFLOW_RULE, "publish_route": "/outside/{work_item_id}/publish"},
+        {**VALID_WORKFLOW_RULE, "host": "https://outside.example"},
+    ],
+)
+def test_mapper_rejects_incomplete_or_out_of_contract_workflow_rules(
+    temporary_ledger: Path, tmp_path: Path, workflow_rule: dict[str, object]
+) -> None:
+    client = FakeClient([
+        json.dumps({**VALID_CONTRACT, "workflow_rules": [workflow_rule]}),
+        json.dumps({**VALID_CONTRACT, "workflow_rules": [workflow_rule]}),
+    ])
+
+    with pytest.raises(MapperError, match="exactly one schema retry"):
+        run_mapper(client=client, output_path=tmp_path / "app_contract.json")
