@@ -29,7 +29,7 @@ def fake_sdk_client(response: object) -> tuple[object, FakeCompletions]:
     [
         ("mapper", "groq", "openai/gpt-oss-20b", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
         ("identity", "groq", "openai/gpt-oss-120b", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
-        ("workflow", "groq", "llama-3.3-70b-versatile", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
+        ("workflow", "groq", "qwen/qwen3.6-27b", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
         ("verifier_a", "groq", "openai/gpt-oss-120b", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
         (
             "verifier_b",
