@@ -1,6 +1,6 @@
 # Crack
 
-Sprint 0 scaffold for Crack, a local-first contained security lab. This sprint includes a health-only FastAPI coordinator and a raw SQLite ledger schema.
+Crack is a local-first, contained, verification-first security lab for bounded AI-planned checks against a disposable, developer-owned demo app. It combines a FastAPI coordinator, code-enforced scope controller, append-only SQLite evidence ledger, deterministic verification and reporting, and a React operations console.
 
 See [AGENTS.md](AGENTS.md) for the authoritative project context, security rules, layout, assumptions, and sprint history.
 
@@ -46,6 +46,18 @@ python -m coordinator.demo
 The fail-closed workflow checks the fixed loopback app and four configured roles, maps source through the scope controller, resets the disposable app, runs identity, passes its exact single hypothesis to the independent verifier, then uses that exact verifier run for the terminal view and twice-generated deterministic reports. It prints safe IDs and artifact paths and writes an ignored session manifest under `demo/output/`.
 
 Exit code `0` means one new hypothesis was independently reproduced as `verified` with a real finding and byte-stable Markdown and HTML reports. `unverified`, `inconclusive`, provider, app, schema, or integrity failures are not presented as demo success. See [the recording runbook](docs/demo-runbook.md) for prerequisites, presentation flow, shutdown, and troubleshooting.
+
+## Workflow business-rule demo
+
+Sprint 7 extends the contained lab with one synthetic release workflow. The intended sequence is `draft` to `approved` to `published`; the deliberate defect allows Account A to publish the seeded release directly from `draft`. The workflow agent can select only the contract-declared transition, makes bounded calls only through the scope controller, and submits an unverified hypothesis only when ordinary code observes the invalid state transition. The existing two-provider verifier performs two sequential clean-reset reproductions, and ordinary code retains ownership of the final verdict and verified-only finding creation.
+
+With the ignored Groq and Gemini environment loaded and the fixed loopback Compose services running, execute:
+
+```sh
+python -m coordinator.workflow_demo
+```
+
+This command makes provider calls and appends evidence to the local ledger. It accepts no target, provider, model, token, prompt, route, or account options. Provider, schema, reset, execution, disagreement, or incomplete-evidence failures remain fail-closed and are not presented as success.
 
 ## Evidence reports
 

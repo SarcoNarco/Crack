@@ -95,4 +95,4 @@ Live session `workflow_demo` completed. Workflow agent run `workflow:d3b6961f-4c
 
 ## Known follow-ups
 
-- Repo-wide pytest collection still collides because mapper, identity, and verifier each have an un-packaged `test_agent.py`; run these suites individually until that layout is corrected in a future sprint.
+- None currently recorded. Repo-wide pytest collection uses importlib mode plus explicit repository-local package roots in `pytest.ini`, so same-named agent test modules remain isolated and `app-under-test` imports resolve without changing production package behavior.
