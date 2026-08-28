@@ -83,7 +83,7 @@ def test_latest_is_verifier_and_generates_both_formats(tmp_path: Path) -> None:
     text = md.read_text()
     assert text.index('## Scope and limitations') < text.index('## Verified findings')
     assert 'Verified findings: 1' in text and 'Unverified hypotheses: 1' in text and 'Inconclusive hypotheses: 1' in text
-    assert r'reset:fixture\-a' in text and r'reset:fixture\-b' in text and r'Synthetic account: account\_a' in text
+    assert r'reset:fixture\-a' in text and r'reset:fixture\-b' in text and r'Synthetic role: account\_a' in text
     assert 'Not yet reproduced' in text and '### Hypothesis `unverified`' in text
     assert page.read_text().startswith('<!doctype html>')
     assert main(['--run-id', 'old-verifier'], database_path=db, output_path=output) == 0
@@ -252,6 +252,50 @@ def test_html_fails_closed_without_separate_plan_evidence(tmp_path: Path) -> Non
         connection.execute("DELETE FROM event WHERE action_type = 'verifier_plan_proposed' AND request_response_summary LIKE '%verifier_b%'")
     with pytest.raises(ReportIntegrityError, match='isolated-plan evidence'):
         render_html(read_run('report-verifier:/unsafe', db))
+
+
+def test_school_portal_role_evidence_renders_the_cross_student_narrative(tmp_path: Path) -> None:
+    db = _fixture(tmp_path / 'ledger.db')
+
+    def school_path(value: str) -> str:
+        if value == '/records/mine':
+            return '/submissions/mine'
+        if value == '/records/{record_id}':
+            return '/submissions/{submission_id}/grade'
+        return '/submissions/submission-student-b-001/grade'
+
+    with sqlite3.connect(db) as connection:
+        connection.execute(
+            "UPDATE hypothesis SET affected_app_rule = ?, concise_claim = ? WHERE id = 'verified'",
+            ('GET /submissions/{submission_id}/grade must enforce student ownership', 'Student A can read Student B submission detail'),
+        )
+        raw = connection.execute("SELECT reproduction_steps FROM finding WHERE id = 'finding-1'").fetchone()[0]
+        attempts = json.loads(raw)
+        for attempt in attempts:
+            for step in attempt['steps']:
+                step['role'] = 'student_b' if step.pop('account') == 'account_b' else 'student_a'
+                step['proposed_path'] = school_path(step['proposed_path'])
+                step['resolved_path'] = school_path(step['resolved_path'])
+        connection.execute("UPDATE finding SET reproduction_steps = ? WHERE id = 'finding-1'", (json.dumps(attempts),))
+        rows = connection.execute("SELECT rowid, action_type, request_response_summary FROM event").fetchall()
+        for rowid, action_type, raw_payload in rows:
+            if action_type not in {'verifier_plan_proposed', 'verifier_call_result'}:
+                continue
+            payload = json.loads(raw_payload)
+            if action_type == 'verifier_plan_proposed':
+                for step in payload['steps']:
+                    step['role'] = 'student_b' if step.pop('account') == 'account_b' else 'student_a'
+                    step['path'] = school_path(step['path'])
+            else:
+                payload['role'] = 'student_b' if payload.pop('account') == 'account_b' else 'student_a'
+                payload['proposed_path'] = school_path(payload['proposed_path'])
+                payload['resolved_path'] = school_path(payload['resolved_path'])
+            connection.execute("UPDATE event SET request_response_summary = ? WHERE rowid = ?", (json.dumps(payload), rowid))
+
+    page = render_html(read_run('report-verifier:/unsafe', db))
+    assert "Student A could read Student B's submission and grade detail." in page
+    assert 'Student B discovers their own submission' in page
+    assert 'submission-student-b-001' in page
 
 
 @pytest.mark.parametrize('column, value, message', [

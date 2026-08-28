@@ -24,12 +24,15 @@ def main() -> None:
         print(f"  snapshot_id: {attempt.snapshot_id}")
         print("  proposed_plan:")
         for step in attempt.plan.steps:
-            print(f"  - {step.account} {step.method} {step.path}")
+            if hasattr(step, "operation"):
+                print(f"  - workflow operation: {step.operation}")
+            else:
+                print(f"  - {step.role} {step.method} {step.path}")
         print("  executed_call_results:")
         for step in attempt.executed_steps:
             resolved_path = step.resolved_path or "<unresolved>"
             print(
-                f"  - {step.account} {step.method} {resolved_path}: "
+                f"  - {step.role} {step.method} {resolved_path}: "
                 f"{json.dumps(step.response, sort_keys=True, default=str)}"
             )
         print(

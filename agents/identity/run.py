@@ -11,9 +11,9 @@ def main() -> None:
     print("tests:")
     for test in result.tests:
         status = "-" if test.status_code is None else str(test.status_code)
-        print(f"- {test.as_account} {test.method} {test.path or '-'} [{status}]: {test.result}")
+        print(f"- {test.as_role} {test.method} {test.path or '-'} [{status}]: {test.result}")
     if result.plan_was_capped:
-        print("plan: capped at 5 app calls")
+        print("plan: capped at 2 app calls")
     print("hypotheses:")
     if not result.hypothesis_ids:
         print("- none")

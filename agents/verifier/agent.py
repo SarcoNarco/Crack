@@ -1,4 +1,4 @@
-"""Independently reproduce one hypothesis and decide its status in code."""
+"""Independently reproduce one school-portal hypothesis and decide its status in code."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from typing import Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from coordinator.progress import ProgressCallback, notify
 from agents.workflow.agent import WORKFLOW_APP_RULE, deterministic_workflow_check
+from coordinator.progress import ProgressCallback, notify
 from ledger.init_db import record_run
 from model_router import ModelClient, get_client
 from scope_controller import (
@@ -28,23 +28,19 @@ from scope_controller import (
 
 
 _LEDGER_DATABASE_PATH = Path(__file__).resolve().parents[2] / "data" / "ledger.db"
-_ACCOUNT_TOKENS = {
-    "account_a": "token-account-a-fixed",
-    "account_b": "token-account-b-fixed",
+_ROLE_TOKENS = {
+    "student_a": "token-student-a-fixed",
+    "student_b": "token-student-b-fixed",
+    "teacher": "token-teacher-fixed",
 }
-_ACCOUNT_OWNER_NAMES = {"account_a": "accounta", "account_b": "accountb"}
-_OWNER_FIELDS = frozenset(
-    {"owner", "owner_id", "owner_account_id", "account", "account_id"}
-)
-_ID_FIELDS = frozenset({"id", "record_id"})
-_STRUCTURED_OUTPUT = {"type": "json_object"}
-_AUTHORIZATION_APP_RULE = "GET /records/{record_id} must enforce record ownership"
+_AUTHORIZATION_APP_RULE = "GET /submissions/{submission_id}/grade must enforce student ownership"
 _DECLARED_SCOPES = {
-    "authorization": "two independent model-planned, clean-reset GET-only authorization reproductions",
-    "workflow": "two independent model-planned, clean-reset workflow transition reproductions",
+    "authorization": "two independent model-planned, clean-reset GET-only cross-student submission-detail reproductions",
+    "workflow": "two independent model-planned, clean-reset Teacher grade-transition reproductions",
 }
 _MAX_PLAN_STEPS = 5
-_PLACEHOLDER_PATH = "/records/{record_id}"
+_DISCOVERY_PATH = "/submissions/mine"
+_PLACEHOLDER_PATH = "/submissions/{submission_id}/grade"
 
 
 class VerifierError(RuntimeError):
@@ -62,40 +58,32 @@ class HypothesisInput(BaseModel):
 
 
 class PlanStep(BaseModel):
-    """One bounded call proposed by a verifier model."""
-
     model_config = ConfigDict(extra="forbid")
 
     method: Literal["GET"]
     path: str = Field(min_length=1, max_length=140)
-    account: Literal["account_a", "account_b"]
+    role: Literal["student_a", "student_b"]
 
     @field_validator("path")
     @classmethod
-    def path_is_a_bounded_record_route(cls, value: str) -> str:
-        if value in {"/records/mine", _PLACEHOLDER_PATH}:
+    def path_is_a_bounded_submission_route(cls, value: str) -> str:
+        if value in {"/submissions/mine", _PLACEHOLDER_PATH}:
             return value
-        if re.fullmatch(r"/records/[A-Za-z0-9_-]{1,100}", value):
+        if re.fullmatch(r"/submissions/[A-Za-z0-9_-]{1,100}/grade", value):
             return value
-        raise ValueError(
-            "path must be /records/mine, /records/{record_id}, or one concrete record path"
-        )
+        raise ValueError("path must be /submissions/mine, a submission-grade placeholder, or one concrete submission-grade path")
 
 
 class ReproductionPlan(BaseModel):
-    """The only model-controlled data: a small sequence of safe read calls."""
-
     model_config = ConfigDict(extra="forbid")
 
     steps: list[PlanStep] = Field(min_length=1, max_length=_MAX_PLAN_STEPS)
 
 
 class WorkflowPlanStep(BaseModel):
-    """One code-resolved workflow operation, with no model-controlled request fields."""
-
     model_config = ConfigDict(extra="forbid")
 
-    operation: Literal["list_owned_work_items", "publish_work_item"]
+    operation: Literal["list_teacher_grades", "publish_grade"]
 
 
 class WorkflowReproductionPlan(BaseModel):
@@ -105,11 +93,9 @@ class WorkflowReproductionPlan(BaseModel):
 
     @field_validator("steps")
     @classmethod
-    def must_use_the_exact_workflow_operations(
-        cls, value: list[WorkflowPlanStep]
-    ) -> list[WorkflowPlanStep]:
-        if [step.operation for step in value] != ["list_owned_work_items", "publish_work_item"]:
-            raise ValueError("workflow plans must list owned items before publishing one item")
+    def exact_workflow_operations(cls, value: list[WorkflowPlanStep]) -> list[WorkflowPlanStep]:
+        if [step.operation for step in value] != ["list_teacher_grades", "publish_grade"]:
+            raise ValueError("workflow plans must list Teacher grades before publishing one grade")
         return value
 
 
@@ -118,7 +104,7 @@ class ExecutedStep:
     method: str
     proposed_path: str
     resolved_path: str | None
-    account: str
+    role: str
     executed: bool
     response: dict[str, object] | None
     result: str
@@ -161,37 +147,43 @@ def _hypothesis_kind(hypothesis: HypothesisInput) -> Literal["authorization", "w
 
 def _planner_prompt(hypothesis: HypothesisInput, kind: Literal["authorization", "workflow"]) -> str:
     if kind == "workflow":
-        return (
-            "You are independently planning one contained workflow reproduction. You plan calls only; "
-            "you do not judge the result. Return only JSON exactly shaped as "
-            '{"steps":[{"operation":"list_owned_work_items"},{"operation":"publish_work_item"}]}. '
-            "The first operation lists Account A-owned work items. The second publishes the exact draft "
-            "item that ordinary code identified. Do not provide routes, methods, accounts, item IDs, states, "
-            "hosts, credentials, conclusions, prose, or extra JSON fields.\n\n"
-            f"CONCISE CLAIM:\n{hypothesis.concise_claim}\n\n"
-            f"EXPECTED EVIDENCE:\n{hypothesis.expected_evidence}"
+        schema = (
+            '{"steps":[{"operation":"list_teacher_grades"},'
+            '{"operation":"publish_grade"}]}'
+        )
+        instructions = (
+            "The first operation lists Teacher-owned grades. The second publishes the "
+            "exact draft grade ordinary code identified. Do not provide routes, methods, "
+            "roles, grade IDs, states, hosts, credentials, conclusions, prose, or extra "
+            "JSON fields."
+        )
+    else:
+        schema = (
+            '{"steps":[{"method":"GET","path":"/submissions/mine",'
+            '"role":"student_b"},{"method":"GET",'
+            '"path":"/submissions/{submission_id}/grade","role":"student_a"}]}'
+        )
+        instructions = (
+            "Allowed roles are student_a and student_b. Allowed paths are "
+            "/submissions/mine, the submission-grade placeholder, or one concrete safe "
+            "submission-grade path. The placeholder is resolved by code from an earlier "
+            "Student B response. Use at most five GET steps; no login, writes, hosts, "
+            "tokens, conclusions, prose, or extra JSON fields."
         )
     return (
-        "You are independently planning a reproduction attempt in a contained demo notes app. "
-        "You plan calls only; you do not judge whether the attempt succeeds. Return only JSON "
-        "matching exactly "
-        '{"steps":[{"method":"GET","path":"/records/mine","account":"account_b"},'
-        '{"method":"GET","path":"/records/{record_id}","account":"account_a"}]}. '
-        "Allowed accounts are account_a and account_b. Allowed paths are /records/mine, "
-        "/records/{record_id}, or a concrete /records/<safe-id> path. The {record_id} placeholder "
-        "is resolved by code from an earlier Account B response. Use at most five GET steps; no "
-        "login, writes, hosts, tokens, conclusions, prose, or extra JSON fields.\n\n"
+        "You are independently planning one contained reproduction attempt. You plan "
+        "calls only; you do not judge the result. "
+        f"Return only JSON matching exactly {schema}. {instructions}\n\n"
         f"CONCISE CLAIM:\n{hypothesis.concise_claim}\n\n"
         f"EXPECTED EVIDENCE:\n{hypothesis.expected_evidence}"
     )
 
 
 def _parse_plan(
-    raw_response: str, kind: Literal["authorization", "workflow"]
+    raw_response: str,
+    kind: Literal["authorization", "workflow"],
 ) -> ReproductionPlan | WorkflowReproductionPlan:
-    fenced = re.fullmatch(
-        r"\s*```(?:json)?\s*\n?(.*?)\n?```\s*", raw_response, re.DOTALL
-    )
+    fenced = re.fullmatch(r"\s*```(?:json)?\s*\n?(.*?)\n?```\s*", raw_response, re.DOTALL)
     document = fenced.group(1) if fenced else raw_response
     try:
         schema = ReproductionPlan if kind == "authorization" else WorkflowReproductionPlan
@@ -200,8 +192,10 @@ def _parse_plan(
         raise VerifierError("model response did not match the bounded verifier plan schema") from exc
 
 
-def _normalise_identity(value: object) -> str:
-    return re.sub(r"[^a-z0-9]+", "", str(value).lower())
+def _safe_id(value: object) -> str | None:
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", value):
+        return None
+    return value
 
 
 def _walk_objects(value: object):
@@ -214,71 +208,80 @@ def _walk_objects(value: object):
             yield from _walk_objects(nested)
 
 
-def _direct_field(record: dict[object, object], names: frozenset[str]) -> object | None:
-    for key, value in record.items():
-        if isinstance(key, str) and key.lower() in names and value is not None:
-            return value
-    return None
+def _student_b_submission_ids(response: dict[str, object]) -> tuple[str, ...]:
+    if response.get("status_code") != 200:
+        return ()
+    values: list[str] = []
+    for item in _walk_objects(response.get("body")):
+        candidate = _safe_id(item.get("submission_id"))
+        if (
+            candidate
+            and str(item.get("student_id", "")).replace("-", "").lower()
+            == "studentb"
+        ):
+            values.append(candidate)
+    return tuple(values)
 
 
-def _safe_record_id(value: object) -> str | None:
-    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", value):
-        return None
-    return value
+def _is_normal_flow_student_b_discovery(
+    *,
+    method: str,
+    role: str,
+    proposed_path: str,
+    resolved_path: str | None,
+) -> bool:
+    """Accept identifiers only from Student B's fixed normal-flow list call."""
+    return (
+        method == "GET"
+        and role == "student_b"
+        and proposed_path == _DISCOVERY_PATH
+        and resolved_path == _DISCOVERY_PATH
+    )
 
 
-def _account_b_record_ids(response: dict[str, object]) -> tuple[str, ...]:
-    record_ids: list[str] = []
-    for record in _walk_objects(response.get("body")):
-        owner = _direct_field(record, _OWNER_FIELDS)
-        record_id = _safe_record_id(_direct_field(record, _ID_FIELDS))
-        if _normalise_identity(owner) == _ACCOUNT_OWNER_NAMES["account_b"] and record_id:
-            record_ids.append(record_id)
-    return tuple(record_ids)
-
-
-def _discover_account_b_record_id(response: dict[str, object]) -> str | None:
-    record_ids = _account_b_record_ids(response)
-    return record_ids[0] if record_ids else None
-
-
-def deterministic_boundary_check(steps: tuple[ExecutedStep, ...]) -> tuple[bool, str, tuple[int, ...]]:
-    """Decide success without consulting either model or its wording."""
-    discovered_account_b_record_ids: set[str] = set()
+def deterministic_boundary_check(
+    steps: tuple[ExecutedStep, ...],
+) -> tuple[bool, str, tuple[int, ...]]:
+    """Require a later Student A detail response for an exact Student B submission."""
+    discovered: set[str] = set()
     matches: list[int] = []
     for index, step in enumerate(steps, start=1):
         response = step.response
-        if not step.executed or response is None:
+        if (
+            not step.executed
+            or response is None
+            or not isinstance(response.get("status_code"), int)
+            or not 200 <= response["status_code"] < 300
+        ):
             continue
-        status_code = response.get("status_code")
-        if not isinstance(status_code, int) or not 200 <= status_code < 300:
+        if _is_normal_flow_student_b_discovery(
+            method=step.method,
+            role=step.role,
+            proposed_path=step.proposed_path,
+            resolved_path=step.resolved_path,
+        ):
+            discovered.update(_student_b_submission_ids(response))
             continue
-
-        if step.account == "account_b":
-            discovered_account_b_record_ids.update(_account_b_record_ids(response))
-            continue
-        if step.account != "account_a" or not discovered_account_b_record_ids:
-            continue
-
-        for record in _walk_objects(response.get("body")):
-            owner = _direct_field(record, _OWNER_FIELDS)
-            record_id = _safe_record_id(_direct_field(record, _ID_FIELDS))
+        body = response.get("body")
+        if step.role == "student_a" and discovered and isinstance(body, dict):
+            returned_student = str(body.get("student_id", "")).replace("-", "").lower()
             if (
-                record_id in discovered_account_b_record_ids
-                and _normalise_identity(owner) == _ACCOUNT_OWNER_NAMES["account_b"]
+                body.get("submission_id") in discovered
+                and returned_student == "studentb"
+                and _safe_id(body.get("grade_id"))
             ):
                 matches.append(index)
-                break
-
     if matches:
         return (
             True,
-            "Account A received the exact record previously discovered as owned by Account B",
+            "Student A received the exact submission previously discovered as owned by "
+            "Student B, including grade detail",
             tuple(matches),
         )
     return (
         False,
-        "No later successful Account A response returned an exact previously discovered Account B-owned record",
+        "No later successful Student A response returned an exact previously discovered "
+        "Student B-owned submission and grade detail",
         (),
     )
 
@@ -287,33 +290,40 @@ def _response_metadata(response: dict[str, object] | None) -> dict[str, object]:
     if response is None:
         return {"status_code": None, "body_type": None, "body_sha256": None}
     body = response.get("body")
-    encoded_body = json.dumps(body, sort_keys=True, default=str).encode()
-    metadata: dict[str, object] = {
+    body_hash = hashlib.sha256(
+        json.dumps(body, sort_keys=True, default=str).encode()
+    ).hexdigest()
+    result: dict[str, object] = {
         "status_code": response.get("status_code"),
         "body_type": type(body).__name__,
-        "body_sha256": hashlib.sha256(encoded_body).hexdigest(),
+        "body_sha256": body_hash,
     }
     if isinstance(body, dict):
-        metadata["body_keys"] = sorted(str(key) for key in body)
-    return metadata
+        result["body_keys"] = sorted(body)
+    return result
 
 
 def _plan_metadata(plan: ReproductionPlan | WorkflowReproductionPlan) -> dict[str, object]:
     steps = [step.model_dump() for step in plan.steps]
-    encoded = json.dumps(steps, sort_keys=True).encode()
+    plan_hash = hashlib.sha256(json.dumps(steps, sort_keys=True).encode()).hexdigest()
     return {
         "step_count": len(steps),
         "steps": steps,
-        "plan_sha256": hashlib.sha256(encoded).hexdigest(),
+        "plan_sha256": plan_hash,
     }
 
 
 def _record_run(
-    *, run_id: str, started_at: str, status: str, snapshot_ids: list[str], kind: str = "authorization"
+    *,
+    run_id: str,
+    started_at: str,
+    status: str,
+    snapshot_ids: list[str],
+    kind: str = "authorization",
 ) -> None:
     record_run(
         run_id=run_id,
-        app_version="sprint-1-seeded-demo-app",
+        app_version="sprint-14-school-portal",
         environment_snapshot_id=json.dumps(snapshot_ids),
         agent_role="verifier",
         declared_scope=_DECLARED_SCOPES[kind],
@@ -360,18 +370,21 @@ def _run_attempt(
         },
         reference=reset_reference,
     )
-
     plan = _parse_plan(
         client.complete(
             [{"role": "user", "content": _planner_prompt(hypothesis, kind)}],
-            response_format=_STRUCTURED_OUTPUT,
+            response_format={"type": "json_object"},
         ),
         kind,
     )
     plan_metadata = _plan_metadata(plan)
     plan_reference = write_evidence(
         "verifier_plan_proposed",
-        {"verifier_role": verifier_role, "snapshot_id": snapshot_id, **plan_metadata},
+        {
+            "verifier_role": verifier_role,
+            "snapshot_id": snapshot_id,
+            **plan_metadata,
+        },
         f"verifier://{verifier_role}/plan",
     )
     notify(
@@ -386,12 +399,8 @@ def _run_attempt(
             else "Bounded workflow-operation plan validated"
         ),
         explanation=(
-            "The model proposed a plan, and ordinary validation accepted only the fixed "
-            + (
-                "accounts and bounded record-read routes."
-                if kind == "authorization"
-                else "workflow operations."
-            )
+            "The model proposed a plan, and ordinary validation accepted only fixed "
+            "school-portal operations."
         ),
         metadata={
             "step_count": plan_metadata["step_count"],
@@ -400,72 +409,77 @@ def _run_attempt(
         reference=plan_reference,
     )
 
-    discovered_record_id: str | None = None
-    discovered_work_item_id: str | None = None
+    discovered_submission_id: str | None = None
+    discovered_grade_id: str | None = None
     executed_steps: list[ExecutedStep] = []
     for index, proposed in enumerate(plan.steps, start=1):
         if kind == "authorization":
             assert isinstance(proposed, PlanStep)
-            method, account, proposed_path = proposed.method, proposed.account, proposed.path
-            resolved_path = proposed_path
+            method, role, proposed_path = proposed.method, proposed.role, proposed.path
             if proposed_path == _PLACEHOLDER_PATH:
                 resolved_path = (
-                    proposed_path.replace("{record_id}", discovered_record_id)
-                    if discovered_record_id
+                    proposed_path.replace("{submission_id}", discovered_submission_id)
+                    if discovered_submission_id
                     else None
                 )
+            else:
+                resolved_path = proposed_path
         else:
             assert isinstance(proposed, WorkflowPlanStep)
-            method, account = (
-                ("GET", "account_a")
-                if proposed.operation == "list_owned_work_items"
-                else ("POST", "account_a")
+            method, role = (
+                ("GET", "teacher")
+                if proposed.operation == "list_teacher_grades"
+                else ("POST", "teacher")
             )
             proposed_path = (
-                "/work-items/mine"
-                if proposed.operation == "list_owned_work_items"
-                else "/work-items/{work_item_id}/publish"
+                "/grades/mine"
+                if proposed.operation == "list_teacher_grades"
+                else "/grades/{grade_id}/publish"
             )
             resolved_path = (
-                "/work-items/mine"
-                if proposed.operation == "list_owned_work_items"
+                "/grades/mine"
+                if proposed.operation == "list_teacher_grades"
                 else (
-                    f"/work-items/{discovered_work_item_id}/publish"
-                    if discovered_work_item_id
+                    f"/grades/{discovered_grade_id}/publish"
+                    if discovered_grade_id
                     else None
                 )
             )
 
-        response: dict[str, object] | None = None
-        if resolved_path is None:
-            result = (
-                "not executed: no Account B record ID was available for the placeholder"
-                if kind == "authorization"
-                else "not executed: no Account A draft work-item ID was available"
+        response = (
+            endpoint_caller(method, resolved_path, _ROLE_TOKENS[role])
+            if resolved_path
+            else None
+        )
+        result = (
+            "executed"
+            if response is not None
+            else "not executed: required exact discovered identifier was unavailable"
+        )
+        if (
+            kind == "authorization"
+            and response is not None
+            and _is_normal_flow_student_b_discovery(
+                method=method,
+                role=role,
+                proposed_path=proposed_path,
+                resolved_path=resolved_path,
             )
-        else:
-            response = endpoint_caller(method, resolved_path, _ACCOUNT_TOKENS[account])
-            result = "executed"
-            if kind == "authorization" and account == "account_b":
-                discovered_record_id = (
-                    _discover_account_b_record_id(response) or discovered_record_id
-                )
-            if kind == "workflow" and proposed_path == "/work-items/mine":
-                body = response.get("body")
-                if isinstance(body, dict) and isinstance(body.get("work_items"), list):
-                    for item in body["work_items"]:
-                        if not isinstance(item, dict):
-                            continue
-                        candidate = item.get("id")
-                        if (
-                            item.get("owner_account_id") == "account-a"
-                            and item.get("state") == "draft"
-                            and isinstance(candidate, str)
-                            and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", candidate)
-                        ):
-                            discovered_work_item_id = candidate
+        ):
+            identifiers = _student_b_submission_ids(response)
+            discovered_submission_id = identifiers[0] if identifiers else None
+        if kind == "workflow" and proposed_path == "/grades/mine" and response is not None:
+            body = response.get("body")
+            if isinstance(body, dict) and isinstance(body.get("grades"), list):
+                for grade in body["grades"]:
+                    if (
+                        isinstance(grade, dict)
+                        and grade.get("teacher_id") == "teacher-001"
+                        and grade.get("state") == "draft"
+                    ):
+                        discovered_grade_id = _safe_id(grade.get("grade_id"))
+                        if discovered_grade_id:
                             break
-
         evidence_reference = write_evidence(
             "verifier_call_result",
             {
@@ -475,7 +489,7 @@ def _run_attempt(
                 "method": method,
                 "proposed_path": proposed_path,
                 "resolved_path": resolved_path,
-                "account": account,
+                "role": role,
                 "executed": response is not None,
                 "result": result,
                 "response": _response_metadata(response),
@@ -491,12 +505,12 @@ def _run_attempt(
             logical_role=verifier_role,
             headline=f"Bounded call {index} recorded",
             explanation=(
-                "The scope controller executed one bounded allowed call and retained only safe "
-                "presentation metadata for the console."
+                "The scope controller executed one bounded allowed call and retained "
+                "only safe presentation metadata."
             ),
             metadata={
                 "step_index": index,
-                "account": account,
+                "role": role,
                 "method": method,
                 "proposed_path": proposed_path,
                 "resolved_path": resolved_path,
@@ -508,26 +522,29 @@ def _run_attempt(
         )
         executed_steps.append(
             ExecutedStep(
-                method=method,
-                proposed_path=proposed_path,
-                resolved_path=resolved_path,
-                account=account,
-                executed=response is not None,
-                response=response,
-                result=result,
-                evidence_reference=evidence_reference,
+                method,
+                proposed_path,
+                resolved_path,
+                role,
+                response is not None,
+                response,
+                result,
+                evidence_reference,
             )
         )
-
     if kind == "authorization":
-        satisfied, reason, matching_steps = deterministic_boundary_check(tuple(executed_steps))
+        satisfied, reason, matching = deterministic_boundary_check(tuple(executed_steps))
     else:
-        listed = executed_steps[0].response if executed_steps else None
-        published = executed_steps[1].response if len(executed_steps) > 1 else None
-        satisfied, reason = deterministic_workflow_check(
-            listed, published, discovered_work_item_id
+        listed_response = executed_steps[0].response if executed_steps else None
+        publish_response = (
+            executed_steps[1].response if len(executed_steps) > 1 else None
         )
-        matching_steps = (2,) if satisfied else ()
+        satisfied, reason = deterministic_workflow_check(
+            listed_response,
+            publish_response,
+            discovered_grade_id,
+        )
+        matching = (2,) if satisfied else ()
     check_reference = write_evidence(
         "verifier_deterministic_check",
         {
@@ -535,7 +552,7 @@ def _run_attempt(
             "snapshot_id": snapshot_id,
             "satisfied": satisfied,
             "reason": reason,
-            "matching_step_indexes": list(matching_steps),
+            "matching_step_indexes": list(matching),
         },
         f"verifier://{verifier_role}/deterministic-check",
     )
@@ -546,29 +563,27 @@ def _run_attempt(
         state="completed",
         logical_role=verifier_role,
         headline=(
-            "Exact-record predicate evaluated"
+            "Exact-submission predicate evaluated"
             if kind == "authorization"
-            else "Workflow-transition predicate evaluated"
+            else "Grade-transition predicate evaluated"
         ),
         explanation=reason,
         metadata={
             "satisfied": satisfied,
-            "matching_step_indexes": list(matching_steps),
+            "matching_step_indexes": list(matching),
         },
         reference=check_reference,
     )
     return AttemptResult(
-        verifier_role=verifier_role,
-        snapshot_id=snapshot_id,
-        plan=plan,
-        executed_steps=tuple(executed_steps),
-        check=DeterministicCheck(satisfied, reason, matching_steps, check_reference),
+        verifier_role,
+        snapshot_id,
+        plan,
+        tuple(executed_steps),
+        DeterministicCheck(satisfied, reason, matching, check_reference),
     )
 
 
-def _verdict(first: AttemptResult, second: AttemptResult) -> Literal[
-    "verified", "unverified", "inconclusive"
-]:
+def _verdict(first: AttemptResult, second: AttemptResult) -> Literal["verified", "unverified", "inconclusive"]:
     if first.check.satisfied and second.check.satisfied:
         return "verified"
     if not first.check.satisfied and not second.check.satisfied:
@@ -577,28 +592,27 @@ def _verdict(first: AttemptResult, second: AttemptResult) -> Literal[
 
 
 def _actual_reproduction_steps(attempts: tuple[AttemptResult, AttemptResult]) -> str:
-    payload = []
-    for attempt in attempts:
-        payload.append(
-            {
-                "verifier_role": attempt.verifier_role,
-                "snapshot_id": attempt.snapshot_id,
-                "steps": [
-                    {
-                        "method": step.method,
-                        "proposed_path": step.proposed_path,
-                        "resolved_path": step.resolved_path,
-                        "account": step.account,
-                        "executed": step.executed,
-                        "status_code": (
-                            step.response.get("status_code") if step.response else None
-                        ),
-                    }
-                    for step in attempt.executed_steps
-                ],
-            }
-        )
-    return json.dumps(payload, sort_keys=True)
+    attempts_payload = [
+        {
+            "verifier_role": attempt.verifier_role,
+            "snapshot_id": attempt.snapshot_id,
+            "steps": [
+                {
+                    "method": step.method,
+                    "proposed_path": step.proposed_path,
+                    "resolved_path": step.resolved_path,
+                    "role": step.role,
+                    "executed": step.executed,
+                    "status_code": (
+                        step.response.get("status_code") if step.response else None
+                    ),
+                }
+                for step in attempt.executed_steps
+            ],
+        }
+        for attempt in attempts
+    ]
+    return json.dumps(attempts_payload, sort_keys=True)
 
 
 def run_verifier(
@@ -615,28 +629,26 @@ def run_verifier(
     run_recorder: Callable[..., None] = _record_run,
     progress: ProgressCallback | None = None,
 ) -> VerificationResult:
-    """Run two isolated plans and derive the only allowed verdict in ordinary code."""
+    """Run two sequential isolated plans and derive the only allowed verdict in ordinary code."""
     started_at = datetime.now(UTC).isoformat()
     run_id = f"verifier:{uuid.uuid4()}"
-    snapshot_ids: list[str] = []
-    sequence_number = 0
-    evidence_references: list[str] = []
+    snapshots: list[str] = []
+    sequence = 0
+    references: list[str] = []
 
-    def write_evidence(
-        action_type: str, summary: dict[str, object], artifact_reference: str
-    ) -> str:
-        nonlocal sequence_number
-        reference = f"ledger://run/{run_id}/event/{sequence_number}"
+    def write_evidence(action_type: str, summary: dict[str, object], artifact_reference: str) -> str:
+        nonlocal sequence
+        reference = f"ledger://run/{run_id}/event/{sequence}"
         evidence_recorder(
             run_id=run_id,
-            sequence_number=sequence_number,
+            sequence_number=sequence,
             action_type=action_type,
             request_response_summary=json.dumps(summary, sort_keys=True),
             artifact_reference=artifact_reference,
             policy_decision="allowed",
         )
-        evidence_references.append(reference)
-        sequence_number += 1
+        references.append(reference)
+        sequence += 1
         return reference
 
     try:
@@ -644,15 +656,9 @@ def run_verifier(
             hypothesis = HypothesisInput.model_validate(hypothesis_reader(hypothesis_id))
         except (ValidationError, ValueError) as exc:
             raise VerifierError(f"could not read hypothesis {hypothesis_id!r}") from exc
-        if hypothesis.id != hypothesis_id:
-            raise VerifierError("scope controller returned a different hypothesis ID")
-        if hypothesis.verification_status != "unverified":
-            raise VerifierError(
-                f"hypothesis {hypothesis_id!r} is not unverified; latest status is "
-                f"{hypothesis.verification_status!r}"
-            )
+        if hypothesis.id != hypothesis_id or hypothesis.verification_status != "unverified":
+            raise VerifierError("hypothesis must be the exact requested unverified revision")
         kind = _hypothesis_kind(hypothesis)
-
         notify(
             progress,
             event_type="verifier_a.activated",
@@ -660,10 +666,7 @@ def run_verifier(
             state="active",
             logical_role="verifier_a",
             headline="Independent check 1 activated",
-            explanation=(
-                "Verifier A is a logical role executing first. It is not a separate process "
-                "or a simultaneous service."
-            ),
+            explanation="Verifier A is a logical role executing first, not a parallel service.",
         )
         first = _run_attempt(
             verifier_role="verifier_a",
@@ -675,7 +678,7 @@ def run_verifier(
             write_evidence=write_evidence,
             progress=progress,
         )
-        snapshot_ids.append(first.snapshot_id)
+        snapshots.append(first.snapshot_id)
         notify(
             progress,
             event_type="verifier_a.completed",
@@ -687,7 +690,6 @@ def run_verifier(
             metadata={"satisfied": first.check.satisfied},
             reference=first.check.evidence_reference,
         )
-
         notify(
             progress,
             event_type="verifier_b.activated",
@@ -696,8 +698,7 @@ def run_verifier(
             logical_role="verifier_b",
             headline="Independent check 2 activated",
             explanation=(
-                "Verifier B now begins from its own fresh reset after Verifier A has "
-                "completed; the attempts are independent and sequential."
+                "Verifier B starts from its own fresh reset after Verifier A completed."
             ),
         )
         second = _run_attempt(
@@ -710,7 +711,7 @@ def run_verifier(
             write_evidence=write_evidence,
             progress=progress,
         )
-        snapshot_ids.append(second.snapshot_id)
+        snapshots.append(second.snapshot_id)
         notify(
             progress,
             event_type="verifier_b.completed",
@@ -722,8 +723,7 @@ def run_verifier(
             metadata={"satisfied": second.check.satisfied},
             reference=second.check.evidence_reference,
         )
-
-        attempts = (first, second)
+        verdict = _verdict(first, second)
         notify(
             progress,
             event_type="consensus.started",
@@ -731,16 +731,12 @@ def run_verifier(
             state="active",
             logical_role="ordinary_code",
             headline="Code-owned consensus evaluation started",
-            explanation=(
-                "Ordinary Python code compares the two deterministic check results; the "
-                "models do not vote or assign the verdict."
-            ),
+            explanation="Ordinary Python code compares the two deterministic checks.",
             metadata={
                 "check_1_satisfied": first.check.satisfied,
                 "check_2_satisfied": second.check.satisfied,
             },
         )
-        verdict = _verdict(first, second)
         verdict_reference = write_evidence(
             "verifier_final_verdict",
             {
@@ -760,8 +756,8 @@ def run_verifier(
             logical_role="ordinary_code",
             headline=f"Code-owned verdict: {verdict}",
             explanation=(
-                "Two passes produce verified, two failures produce unverified, and a "
-                "disagreement produces inconclusive. Incomplete execution produces no verdict."
+                "Two passes produce verified, two failures produce unverified, and "
+                "disagreement produces inconclusive."
             ),
             metadata={
                 "check_1_satisfied": first.check.satisfied,
@@ -770,25 +766,22 @@ def run_verifier(
             },
             reference=verdict_reference,
         )
-
-        finding_id: str | None = None
+        finding_id = None
         if verdict == "verified":
+            remediation = (
+                "Require the reviewed state before publishing grades."
+                if kind == "workflow"
+                else "Enforce student ownership before returning submission and grade detail."
+            )
             finding_id = finding_recorder(
                 hypothesis_id,
                 (
-                    "High impact: two independent clean-reset attempts demonstrated that "
-                    "a draft work item can bypass its required approval state."
-                    if kind == "workflow"
-                    else "High impact: two independent clean-reset attempts demonstrated that "
-                    "Account A can read a record owned by another account."
+                    "High impact: two independent clean-reset attempts demonstrated the "
+                    "same contained school-portal defect."
                 ),
-                _actual_reproduction_steps(attempts),
-                json.dumps(evidence_references),
-                (
-                    "Require the approved state server-side before publishing a work item."
-                    if kind == "workflow"
-                    else "Enforce an ownership check server-side before returning the record."
-                ),
+                _actual_reproduction_steps((first, second)),
+                json.dumps(references),
+                remediation,
             )
             notify(
                 progress,
@@ -798,27 +791,26 @@ def run_verifier(
                 logical_role="ordinary_code",
                 headline="Verified finding recorded",
                 explanation=(
-                    "A finding was created only because both deterministic checks passed and "
-                    "the append-only hypothesis status is verified."
+                    "A finding was created only because both deterministic checks passed "
+                    "and the append-only hypothesis status is verified."
                 ),
                 metadata={"finding_id": finding_id, "hypothesis_id": hypothesis_id},
                 reference=f"ledger://finding/{finding_id}",
             )
-
         run_recorder(
             run_id=run_id,
             started_at=started_at,
             status="completed",
-            snapshot_ids=snapshot_ids,
+            snapshot_ids=snapshots,
             kind=kind,
         )
-        return VerificationResult(run_id, hypothesis_id, attempts, verdict, finding_id)
+        return VerificationResult(run_id, hypothesis_id, (first, second), verdict, finding_id)
     except Exception:
         run_recorder(
             run_id=run_id,
             started_at=started_at,
             status="failed",
-            snapshot_ids=snapshot_ids,
+            snapshot_ids=snapshots,
             kind=locals().get("kind", "authorization"),
         )
         raise

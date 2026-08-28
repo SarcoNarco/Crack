@@ -14,25 +14,37 @@ from agents.workflow.agent import (
 )
 
 
-ITEM_ID = "release-account-a-001"
+GRADE_ID = "grade-student-a-001"
 RULE = {
-    "rule_id": "approval_before_publish",
-    "account": "account_a",
-    "states": ["draft", "approved", "published"],
-    "list_route": "/work-items/mine",
-    "approve_route": "/work-items/{work_item_id}/approve",
-    "publish_route": "/work-items/{work_item_id}/publish",
-    "required_predecessor": "approved",
+    "rule_id": "review_before_publish",
+    "account": "teacher",
+    "states": ["draft", "reviewed", "published"],
+    "list_route": "/grades/mine",
+    "review_route": "/grades/{grade_id}/review",
+    "publish_route": "/grades/{grade_id}/publish",
+    "required_predecessor": "reviewed",
     "invalid_predecessor": "draft",
 }
 CONTRACT = {
     "routes": [
-        {"method": "GET", "path": "/work-items/mine", "description": "List owned work items"},
-        {"method": "POST", "path": "/work-items/{work_item_id}/approve", "description": "Approve a work item"},
-        {"method": "POST", "path": "/work-items/{work_item_id}/publish", "description": "Publish a work item"},
+        {
+            "method": "GET",
+            "path": "/grades/mine",
+            "description": "List Teacher grades",
+        },
+        {
+            "method": "POST",
+            "path": "/grades/{grade_id}/review",
+            "description": "Review grade",
+        },
+        {
+            "method": "POST",
+            "path": "/grades/{grade_id}/publish",
+            "description": "Publish grade",
+        },
     ],
-    "roles": ["account-a", "account-b"],
-    "assumptions": ["The workflow is synthetic and local only."],
+    "roles": ["Teacher", "Student A", "Student B"],
+    "assumptions": ["Synthetic portal."],
     "workflow_rules": [RULE],
 }
 
@@ -47,6 +59,11 @@ class FakeClient:
         return self.responses.pop(0)
 
 
+class FailingClient(FakeClient):
+    def complete(self, *_args: object, **_kwargs: object) -> str:
+        raise RuntimeError("provider unavailable")
+
+
 def _contract_path(tmp_path: Path, contract: dict[str, object] = CONTRACT) -> Path:
     path = tmp_path / "app_contract.json"
     path.write_text(json.dumps(contract), encoding="utf-8")
@@ -57,26 +74,46 @@ def _draft_list() -> dict[str, object]:
     return {
         "status_code": 200,
         "body": {
-            "work_items": [
-                {"id": ITEM_ID, "owner_account_id": "account-a", "state": "draft"}
+            "grades": [
+                {
+                    "grade_id": GRADE_ID,
+                    "teacher_id": "teacher-001",
+                    "state": "draft",
+                }
             ]
         },
     }
 
 
-def test_observed_draft_publish_submits_one_unverified_workflow_hypothesis(tmp_path: Path) -> None:
+def test_draft_grade_publish_submits_one_unverified_workflow_hypothesis(
+    tmp_path: Path,
+) -> None:
     calls: list[tuple[str, str, str]] = []
     submitted: list[tuple[str, str, str, str]] = []
-    client = FakeClient([
-        json.dumps({"workflow_rule_id": "approval_before_publish"}),
-        json.dumps({"concise_claim": "Draft work item publishes without approval.", "expected_evidence": "Account A receives a draft-to-published result."}),
-    ])
+    client = FakeClient(
+        [
+            json.dumps({"workflow_rule_id": "review_before_publish"}),
+            json.dumps(
+                {
+                    "concise_claim": "Draft grade publishes without review.",
+                    "expected_evidence": "Teacher receives a draft-to-published grade result.",
+                }
+            ),
+        ]
+    )
 
     def call(method: str, path: str, token: str) -> dict[str, object]:
         calls.append((method, path, token))
         if method == "GET":
             return _draft_list()
-        return {"status_code": 200, "body": {"id": ITEM_ID, "previous_state": "draft", "state": "published"}}
+        return {
+            "status_code": 200,
+            "body": {
+                "grade_id": GRADE_ID,
+                "previous_state": "draft",
+                "state": "published",
+            },
+        }
 
     result = run_workflow(
         client=client,
@@ -88,8 +125,8 @@ def test_observed_draft_publish_submits_one_unverified_workflow_hypothesis(tmp_p
     )
 
     assert calls == [
-        ("GET", "/work-items/mine", "token-account-a-fixed"),
-        ("POST", f"/work-items/{ITEM_ID}/publish", "token-account-a-fixed"),
+        ("GET", "/grades/mine", "token-teacher-fixed"),
+        ("POST", f"/grades/{GRADE_ID}/publish", "token-teacher-fixed"),
     ]
     assert result.hypothesis_ids == ["workflow-hypothesis"]
     assert submitted[0][1] == WORKFLOW_APP_RULE
@@ -102,23 +139,36 @@ def test_observed_draft_publish_submits_one_unverified_workflow_hypothesis(tmp_p
 @pytest.mark.parametrize(
     "publish_response",
     [
-        {"status_code": 409, "body": {"detail": "Approval required"}},
-        {"status_code": 200, "body": {"id": ITEM_ID, "previous_state": "approved", "state": "published"}},
-        {"status_code": 200, "body": {"id": "other", "previous_state": "draft", "state": "published"}},
+        {"status_code": 409, "body": {"detail": "Review required"}},
+        {
+            "status_code": 200,
+            "body": {
+                "grade_id": GRADE_ID,
+                "previous_state": "reviewed",
+                "state": "published",
+            },
+        },
+        {
+            "status_code": 200,
+            "body": {
+                "grade_id": "other",
+                "previous_state": "draft",
+                "state": "published",
+            },
+        },
     ],
 )
 def test_valid_enforcement_or_incomplete_evidence_submits_no_hypothesis(
-    tmp_path: Path, publish_response: dict[str, object]
+    tmp_path: Path,
+    publish_response: dict[str, object],
 ) -> None:
     submitted: list[tuple[object, ...]] = []
-
-    def call(method: str, _path: str, _token: str) -> dict[str, object]:
-        return _draft_list() if method == "GET" else publish_response
-
     result = run_workflow(
-        client=FakeClient([json.dumps({"workflow_rule_id": "approval_before_publish"})]),
+        client=FakeClient([json.dumps({"workflow_rule_id": "review_before_publish"})]),
         contract_path=_contract_path(tmp_path),
-        endpoint_caller=call,
+        endpoint_caller=lambda method, *_args: (
+            _draft_list() if method == "GET" else publish_response
+        ),
         evidence_recorder=lambda **_kwargs: None,
         hypothesis_submitter=lambda *args: submitted.append(args) or "unexpected",
         run_recorder=lambda **_kwargs: None,
@@ -131,15 +181,18 @@ def test_valid_enforcement_or_incomplete_evidence_submits_no_hypothesis(
 @pytest.mark.parametrize(
     "plan",
     [
-        {"workflow_rule_id": "approval_before_publish", "path": "/anything"},
+        {"workflow_rule_id": "review_before_publish", "path": "/anything"},
         {"workflow_rule_id": "other_rule"},
-        {"workflow_rule_id": "approval_before_publish", "account": "account_b"},
+        {"workflow_rule_id": "review_before_publish", "role": "student_a"},
     ],
 )
-def test_out_of_contract_model_plan_fails_closed_before_any_call(tmp_path: Path, plan: dict[str, object]) -> None:
-    calls: list[tuple[str, str, str]] = []
+def test_out_of_contract_workflow_plans_fail_before_app_calls(
+    tmp_path: Path,
+    plan: dict[str, object],
+) -> None:
+    calls: list[tuple[object, ...]] = []
 
-    with pytest.raises(WorkflowError):
+    with pytest.raises(WorkflowError, match="workflow-agent schema"):
         run_workflow(
             client=FakeClient([json.dumps(plan)]),
             contract_path=_contract_path(tmp_path),
@@ -152,14 +205,31 @@ def test_out_of_contract_model_plan_fails_closed_before_any_call(tmp_path: Path,
     assert calls == []
 
 
-def test_missing_or_incomplete_workflow_contract_fails_closed_before_any_call(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "contract",
+    [
+        {key: value for key, value in CONTRACT.items() if key != "workflow_rules"},
+        {**CONTRACT, "workflow_rules": [{**RULE, "publish_route": "/outside/{grade_id}"}]},
+        {
+            **CONTRACT,
+            "routes": [
+                route
+                for route in CONTRACT["routes"]
+                if route["path"] != "/grades/{grade_id}/review"
+            ],
+        },
+    ],
+)
+def test_out_of_contract_workflow_rules_and_routes_fail_before_app_calls(
+    tmp_path: Path,
+    contract: dict[str, object],
+) -> None:
     calls: list[tuple[object, ...]] = []
-    no_rule = {key: value for key, value in CONTRACT.items() if key != "workflow_rules"}
 
-    with pytest.raises(WorkflowError, match="exactly one bounded workflow rule"):
+    with pytest.raises(WorkflowError):
         run_workflow(
-            client=FakeClient([json.dumps({"workflow_rule_id": "approval_before_publish"})]),
-            contract_path=_contract_path(tmp_path, no_rule),
+            client=FakeClient([json.dumps({"workflow_rule_id": "review_before_publish"})]),
+            contract_path=_contract_path(tmp_path, contract),
             endpoint_caller=lambda *args: calls.append(args) or _draft_list(),
             evidence_recorder=lambda **_kwargs: None,
             hypothesis_submitter=lambda *_args: "unexpected",
@@ -169,45 +239,80 @@ def test_missing_or_incomplete_workflow_contract_fails_closed_before_any_call(tm
     assert calls == []
 
 
-def test_provider_failure_has_no_hypothesis_or_status_side_effect(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "client",
+    [FailingClient([]), FakeClient(["not valid structured JSON"])],
+    ids=["provider-failure", "malformed-output"],
+)
+def test_provider_or_schema_failure_has_no_side_effects_or_endpoint_calls(
+    tmp_path: Path,
+    client: FakeClient,
+) -> None:
+    calls: list[tuple[object, ...]] = []
     submitted: list[tuple[object, ...]] = []
     runs: list[dict[str, object]] = []
 
-    class FailingClient(FakeClient):
-        def complete(self, *_args: object, **_kwargs: object) -> str:
-            raise RuntimeError("provider unavailable")
-
-    with pytest.raises(RuntimeError, match="provider unavailable"):
+    with pytest.raises((RuntimeError, WorkflowError)):
         run_workflow(
-            client=FailingClient([]),
+            client=client,
             contract_path=_contract_path(tmp_path),
-            endpoint_caller=lambda *_args: _draft_list(),
+            endpoint_caller=lambda *args: calls.append(args) or _draft_list(),
             evidence_recorder=lambda **_kwargs: None,
             hypothesis_submitter=lambda *args: submitted.append(args) or "unexpected",
             run_recorder=lambda **kwargs: runs.append(kwargs),
         )
 
+    assert calls == []
     assert submitted == []
     assert runs[-1]["status"] == "failed"
 
 
-def test_code_owned_predicate_requires_exact_draft_to_published_transition() -> None:
-    satisfied, _reason = deterministic_workflow_check(
+def test_predicate_binds_exact_grade_owner_and_states() -> None:
+    assert deterministic_workflow_check(
         _draft_list(),
-        {"status_code": 200, "body": {"id": ITEM_ID, "previous_state": "draft", "state": "published"}},
-        ITEM_ID,
-    )
-    assert satisfied is True
+        {
+            "status_code": 200,
+            "body": {
+                "grade_id": GRADE_ID,
+                "previous_state": "draft",
+                "state": "published",
+            },
+        },
+        GRADE_ID,
+    )[0] is True
+    assert deterministic_workflow_check(
+        {
+            "status_code": 200,
+            "body": {
+                "grades": [
+                    {"grade_id": GRADE_ID, "teacher_id": "other", "state": "draft"}
+                ]
+            },
+        },
+        {
+            "status_code": 200,
+            "body": {
+                "grade_id": GRADE_ID,
+                "previous_state": "draft",
+                "state": "published",
+            },
+        },
+        GRADE_ID,
+    )[0] is False
 
-    rejected, _reason = deterministic_workflow_check(
-        _draft_list(),
-        {"status_code": 200, "body": {"id": ITEM_ID, "previous_state": "approved", "state": "published"}},
-        ITEM_ID,
-    )
-    assert rejected is False
 
-
-def test_agent_has_no_direct_network_database_shell_or_environment_access() -> None:
+def test_workflow_has_no_direct_network_database_shell_or_environment_capability() -> None:
     source = inspect.getsource(__import__("agents.workflow.agent", fromlist=["run_workflow"]))
-    forbidden = ("http.client", "requests.", "sqlite3", "subprocess", "os.environ", "socket")
+    forbidden = (
+        "http.client",
+        "requests.",
+        "sqlite3",
+        "subprocess",
+        "os.environ",
+        "os.getenv",
+        "socket",
+    )
+
     assert all(value not in source for value in forbidden)
+    assert "target" not in inspect.signature(run_workflow).parameters
+    assert "status_updater" not in inspect.signature(run_workflow).parameters

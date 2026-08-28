@@ -31,7 +31,7 @@ EVENT_TYPES = (
     "preflight.started", "preflight.completed",
     "mapper.activated", "mapper.completed",
     "identity_reset.started", "identity_reset.completed",
-    "identity.activated", "identity.account_b_discovery", "identity.account_a_retrieval",
+    "identity.activated", "identity.student_b_discovery", "identity.student_a_retrieval",
     "hypothesis.created", "identity.completed",
     "verifier_a.activated", "verifier_a.reset_completed", "verifier_a.plan_validated",
     "verifier_a.call_recorded", "verifier_a.check_completed", "verifier_a.completed",
@@ -47,10 +47,10 @@ _METADATA_FIELDS: dict[str, frozenset[str]] = {
     "preflight.completed": frozenset({"role_bindings"}),
     "mapper.completed": frozenset({"route_count"}),
     "identity_reset.completed": frozenset({"reset_id", "state_hash"}),
-    "identity.account_b_discovery": frozenset({"status_code", "record_id", "owner_account"}),
-    "identity.account_a_retrieval": frozenset({
-        "status_code", "requested_record_id", "returned_record_id", "returned_owner",
-        "exact_record_match",
+    "identity.student_b_discovery": frozenset({"status_code", "submission_id", "student"}),
+    "identity.student_a_retrieval": frozenset({
+        "status_code", "requested_submission_id", "returned_submission_id", "returned_student",
+        "exact_submission_match",
     }),
     "hypothesis.created": frozenset({"hypothesis_id"}),
     "identity.completed": frozenset({"identity_run_id", "hypothesis_id"}),
@@ -59,11 +59,11 @@ _METADATA_FIELDS: dict[str, frozenset[str]] = {
     "verifier_a.plan_validated": frozenset({"step_count", "plan_sha256"}),
     "verifier_b.plan_validated": frozenset({"step_count", "plan_sha256"}),
     "verifier_a.call_recorded": frozenset({
-        "step_index", "account", "method", "proposed_path", "resolved_path", "executed",
+        "step_index", "role", "method", "proposed_path", "resolved_path", "executed",
         "status_code", "body_sha256",
     }),
     "verifier_b.call_recorded": frozenset({
-        "step_index", "account", "method", "proposed_path", "resolved_path", "executed",
+        "step_index", "role", "method", "proposed_path", "resolved_path", "executed",
         "status_code", "body_sha256",
     }),
     "verifier_a.check_completed": frozenset({"satisfied", "matching_step_indexes"}),

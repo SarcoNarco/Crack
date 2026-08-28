@@ -7,28 +7,28 @@ import type { ConsoleTransport } from './api'
 import type { PresentationEvent, RunStatus } from './types'
 
 describe('live operations console', () => {
-  it('shows the successful replay with the truthful Account A and Account B story', () => {
+  it('shows the successful replay with the truthful Student A and Student B story', () => {
     render(<App preview="success" />)
     expect(screen.getByText('REPLAY / SYNTHETIC PREVIEW')).toBeInTheDocument()
-    expect(screen.getByText('Account B lists its own record')).toBeInTheDocument()
-    expect(screen.getByText('Account A requests that record')).toBeInTheDocument()
-    expect(screen.getByText('Exact-record match observed')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Cross-account read verified.' })).toBeInTheDocument()
+    expect(screen.getByText('Student B lists their own submission')).toBeInTheDocument()
+    expect(screen.getByText('Student A requests that submission detail')).toBeInTheDocument()
+    expect(screen.getByText('Exact-submission match observed')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Cross-student detail read verified.' })).toBeInTheDocument()
   })
 
   it('switches presentation-only simple and technical modes', async () => {
     const user = userEvent.setup()
     render(<App preview="success" />)
-    expect(screen.queryByText('reset:preview-a:state-sha256:1bc3c2fa4a64fea8')).not.toBeInTheDocument()
+    expect(screen.queryByText('reset:preview-a:state-sha256:school-preview-state')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Technical' }))
-    expect(screen.getByText('reset:preview-a:state-sha256:1bc3c2fa4a64fea8')).toBeInTheDocument()
-    expect(screen.getByText('reset:preview-b:state-sha256:1bc3c2fa4a64fea8')).toBeInTheDocument()
+    expect(screen.getByText('reset:preview-a:state-sha256:school-preview-state')).toBeInTheDocument()
+    expect(screen.getByText('reset:preview-b:state-sha256:school-preview-state')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Technical' })).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('presents the ordinary-code consensus truth table without model voting language', () => {
     render(<App preview="success" />)
-    expect(screen.getByText('Exact-record predicate')).toBeInTheDocument()
+    expect(screen.getByText('Exact-submission predicate')).toBeInTheDocument()
     expect(screen.getByText('Models plan. Code decides.')).toBeInTheDocument()
     expect(screen.getByText('Two passes → verified')).toBeInTheDocument()
     expect(screen.getByText('Incomplete provider or schema execution → no verdict')).toBeInTheDocument()
@@ -131,7 +131,7 @@ describe('live operations console', () => {
     })
     window.history.replaceState({}, '', `?session=${events[0].session_id}`)
     render(<App preview={null} transport={{ start, observe, subscribe }} />)
-    expect(await screen.findByRole('heading', { name: 'Cross-account read verified.' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Cross-student detail read verified.' })).toBeInTheDocument()
     expect(observe).toHaveBeenCalledWith(events[0].session_id)
     expect(start).not.toHaveBeenCalled()
     expect(screen.getAllByRole('button', { name: /^Inspect event/ })).toHaveLength(

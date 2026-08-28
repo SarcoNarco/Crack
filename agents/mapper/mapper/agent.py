@@ -34,13 +34,13 @@ class WorkflowRule(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    rule_id: Literal["approval_before_publish"]
-    account: Literal["account_a"]
-    states: tuple[Literal["draft", "approved", "published"], Literal["draft", "approved", "published"], Literal["draft", "approved", "published"]]
-    list_route: Literal["/work-items/mine"]
-    approve_route: Literal["/work-items/{work_item_id}/approve"]
-    publish_route: Literal["/work-items/{work_item_id}/publish"]
-    required_predecessor: Literal["approved"]
+    rule_id: Literal["review_before_publish"]
+    account: Literal["teacher"]
+    states: tuple[Literal["draft", "reviewed", "published"], Literal["draft", "reviewed", "published"], Literal["draft", "reviewed", "published"]]
+    list_route: Literal["/grades/mine"]
+    review_route: Literal["/grades/{grade_id}/review"]
+    publish_route: Literal["/grades/{grade_id}/publish"]
+    required_predecessor: Literal["reviewed"]
     invalid_predecessor: Literal["draft"]
 
     @field_validator("states")
@@ -48,8 +48,8 @@ class WorkflowRule(BaseModel):
     def states_must_describe_the_only_supported_workflow(
         cls, value: tuple[str, str, str]
     ) -> tuple[str, str, str]:
-        if value != ("draft", "approved", "published"):
-            raise ValueError("workflow states must be draft, approved, published in order")
+        if value != ("draft", "reviewed", "published"):
+            raise ValueError("workflow states must be draft, reviewed, published in order")
         return value
 
 
@@ -76,17 +76,17 @@ def _prompt(context: str, *, strict: bool) -> str:
         'Return only JSON matching exactly: {"routes":[{"method":"GET",'
         '"path":"/example","description":"..."}],"roles":["..."],'
         '"assumptions":["..."],"workflow_rules":[]}. Every route needs all three string fields. '
-        'When the source declares /work-items/mine plus approve and publish routes, include exactly '
-        'one workflow rule with rule_id approval_before_publish, account account_a, states '
-        '["draft","approved","published"], list_route /work-items/mine, approve_route '
-        '/work-items/{work_item_id}/approve, publish_route /work-items/{work_item_id}/publish, '
-        'required_predecessor approved, and invalid_predecessor draft.'
+        'When the source declares /grades/mine plus review and publish routes, include exactly '
+        'one workflow rule with rule_id review_before_publish, account teacher, states '
+        '["draft","reviewed","published"], list_route /grades/mine, review_route '
+        '/grades/{grade_id}/review, publish_route /grades/{grade_id}/publish, '
+        'required_predecessor reviewed, and invalid_predecessor draft.'
     )
     retry = " This is the final retry: do not use Markdown fences or prose." if strict else ""
     return (
         "You are a contained app mapper. Infer the intended API surface only from the "
         "provided source. Do not claim tests, live behavior, exploits, or facts absent from it. "
-        "List route decorators, seeded account roles/display names, and uncertain observations. "
+        "List route decorators, seeded synthetic roles/display names, and uncertain observations. "
         f"{schema}{retry}\n\nSOURCE CONTEXT:\n{context}"
     )
 

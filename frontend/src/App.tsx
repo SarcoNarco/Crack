@@ -37,10 +37,10 @@ const ALLOWED_REASON: Record<StageKey | 'session', string> = {
   session: 'The server created the session; the browser supplied no target, provider, credential, or prompt.',
   preflight: 'It checks only the fixed loopback demo app and committed model-role configuration.',
   mapper: 'Source reads stay inside the existing scope-controller allowlist.',
-  authorization: 'Only two normal-flow GET calls use fixed synthetic Account A and Account B identities.',
+  authorization: 'Only two normal-flow GET calls use fixed synthetic Student A and Student B identities.',
   verifier_a: 'The plan is schema-limited to bounded GET calls and starts after a clean reset.',
   verifier_b: 'The second plan is isolated and begins only after the first check completes.',
-  consensus: 'Ordinary Python code applies the fixed exact-record predicate and verdict table.',
+  consensus: 'Ordinary Python code applies the fixed exact-submission predicate and verdict table.',
   report: 'The renderer reads the exact completed ledger run without invoking agents or providers.',
 }
 
@@ -48,7 +48,7 @@ const EVIDENCE: Record<StageKey | 'session', string> = {
   session: 'A safe presentation journal records accepted and terminal session state.',
   preflight: 'Only readiness and configured provider/model labels are presented.',
   mapper: 'The ledger retains the mapper run status; completed mapping adds only route count and a safe artifact reference.',
-  authorization: 'HTTP status, exact synthetic record ID, owner label, hypothesis ID, and ledger references.',
+  authorization: 'HTTP status, exact synthetic submission ID, student label, hypothesis ID, and ledger references.',
   verifier_a: 'Reset ID, logical state hash, plan hash, bounded call metadata, and deterministic check result.',
   verifier_b: 'A distinct reset ID with the equivalent state hash and the same safe evidence categories.',
   consensus: 'Both boolean check results, the ordinary-code verdict, and a finding reference only when verified.',
@@ -131,20 +131,20 @@ function StageGraph({
 }
 
 function AuthorizationStory({ events, mode }: { events: PresentationEvent[]; mode: DisplayMode }) {
-  const discovery = latest(events, 'identity.account_b_discovery')
-  const retrieval = latest(events, 'identity.account_a_retrieval')
-  const discoveredId = discovery?.metadata.record_id
-  const requestedId = retrieval?.metadata.requested_record_id
-  const returnedId = retrieval?.metadata.returned_record_id
-  const matched = retrieval?.metadata.exact_record_match
+  const discovery = latest(events, 'identity.student_b_discovery')
+  const retrieval = latest(events, 'identity.student_a_retrieval')
+  const discoveredId = discovery?.metadata.submission_id
+  const requestedId = retrieval?.metadata.requested_submission_id
+  const returnedId = retrieval?.metadata.returned_submission_id
+  const matched = retrieval?.metadata.exact_submission_match
   return (
     <div className="authorization-story">
       <ol>
-        <li className={discovery ? 'resolved account-b' : ''}><span>1</span><div><strong>Account B lists its own record</strong><p>{discovery ? `HTTP ${text(discovery.metadata.status_code)}` : 'Waiting for the received discovery event.'}</p></div></li>
-        <li className={discoveredId ? 'resolved record' : ''}><span>2</span><div><strong>Exact record ID captured</strong><p className="mono wrap">{text(discoveredId)}</p></div></li>
-        <li className={requestedId ? 'resolved account-a' : ''}><span>3</span><div><strong>Account A requests that record</strong><p className="mono wrap">{text(requestedId)}</p></div></li>
-        <li className={retrieval ? 'resolved boundary' : ''}><span>4</span><div><strong>Returned record crosses ownership boundary</strong><p>{retrieval ? `HTTP ${text(retrieval.metadata.status_code)} · owner ${text(retrieval.metadata.returned_owner)}` : 'Waiting for the received retrieval event.'}</p></div></li>
-        <li className={matched !== undefined ? 'resolved predicate' : ''}><span>5</span><div><strong>Code compares record ID and owner</strong><p>{matched === undefined ? 'Not evaluated yet' : matched ? 'Exact-record match observed' : 'Exact-record match not observed'}</p></div></li>
+        <li className={discovery ? 'resolved student-b' : ''}><span>1</span><div><strong>Student B lists their own submission</strong><p>{discovery ? `HTTP ${text(discovery.metadata.status_code)}` : 'Waiting for the received discovery event.'}</p></div></li>
+        <li className={discoveredId ? 'resolved submission' : ''}><span>2</span><div><strong>Exact submission ID captured</strong><p className="mono wrap">{text(discoveredId)}</p></div></li>
+        <li className={requestedId ? 'resolved student-a' : ''}><span>3</span><div><strong>Student A requests that submission detail</strong><p className="mono wrap">{text(requestedId)}</p></div></li>
+        <li className={retrieval ? 'resolved boundary' : ''}><span>4</span><div><strong>Returned detail crosses student ownership</strong><p>{retrieval ? `HTTP ${text(retrieval.metadata.status_code)} · student ${text(retrieval.metadata.returned_student)}` : 'Waiting for the received retrieval event.'}</p></div></li>
+        <li className={matched !== undefined ? 'resolved predicate' : ''}><span>5</span><div><strong>Code compares submission ID and student</strong><p>{matched === undefined ? 'Not evaluated yet' : matched ? 'Exact-submission match observed' : 'Exact-submission match not observed'}</p></div></li>
       </ol>
       {mode === 'technical' && retrieval && (
         <div className="story-technical">
@@ -201,7 +201,7 @@ function ConsensusGate({ event }: { event: PresentationEvent | null }) {
     <div className={`consensus-gate ${event ? 'resolved' : ''}`}>
       <div className="gate-input"><span>Check 1</span><strong>{first === undefined ? 'Waiting' : first ? 'Pass' : 'Fail'}</strong></div>
       <div className="gate-input"><span>Check 2</span><strong>{second === undefined ? 'Waiting' : second ? 'Pass' : 'Fail'}</strong></div>
-      <div className="gate-core"><span>Ordinary code</span><strong>Exact-record predicate</strong><small>Models plan. Code decides.</small></div>
+      <div className="gate-core"><span>Ordinary code</span><strong>Exact-submission predicate</strong><small>Models plan. Code decides.</small></div>
       <div className="gate-output"><span>Verdict</span><strong>{text(event?.metadata.verdict, 'Pending')}</strong></div>
       <details>
         <summary>Consensus truth table</summary>
@@ -284,8 +284,8 @@ export default function App({ preview, initialEvents, transport = liveTransport 
     }
   }
 
-  const discovery = latest(consoleState.events, 'identity.account_b_discovery')
-  const retrieval = latest(consoleState.events, 'identity.account_a_retrieval')
+  const discovery = latest(consoleState.events, 'identity.student_b_discovery')
+  const retrieval = latest(consoleState.events, 'identity.student_a_retrieval')
   const sessionId = consoleState.events[0]?.session_id
   const verdict = derived.consensus?.metadata.verdict ?? derived.terminal?.metadata.verdict
   const reportUrl = typeof derived.report?.metadata.report_url === 'string'
@@ -298,7 +298,7 @@ export default function App({ preview, initialEvents, transport = liveTransport 
     <div className="app-shell">
       <a className="skip-link" href="#main-content">Skip to operations</a>
       <header className="topbar">
-        <div><p className="brand"><span>CRACK</span> / LIVE RED-TEAM OPERATIONS</p><p className="boundary">Developer-owned · loopback only · synthetic accounts and records</p></div>
+        <div><p className="brand"><span>CRACK</span> / LIVE RED-TEAM OPERATIONS</p><p className="boundary">Developer-owned · loopback only · synthetic Teacher, students, submissions, and grades</p></div>
         <div className="mode-switch" role="group" aria-label="Display mode">
           <button type="button" className={mode === 'simple' ? 'selected' : ''} aria-pressed={mode === 'simple'} onClick={() => setMode('simple')}>Simple</button>
           <button type="button" className={mode === 'technical' ? 'selected' : ''} aria-pressed={mode === 'technical'} onClick={() => setMode('technical')}>Technical</button>
@@ -355,7 +355,7 @@ export default function App({ preview, initialEvents, transport = liveTransport 
             <VerifierLane stage="verifier_a" title="Independent check 1 — Verifier A" events={consoleState.events} state={derived.stages.verifier_a} mode={mode} />
             <VerifierLane stage="verifier_b" title="Independent check 2 — Verifier B" events={consoleState.events} state={derived.stages.verifier_b} mode={mode} />
           </div>
-          <p className="state-proof">Distinct reset IDs prove different reset operations. A shared logical hash proves equivalent ordered seeded accounts and records.</p>
+          <p className="state-proof">Distinct reset IDs prove different reset operations. A shared logical hash proves equivalent ordered seeded school-portal data.</p>
         </section>
 
         <section aria-labelledby="consensus-heading">
@@ -383,7 +383,7 @@ export default function App({ preview, initialEvents, transport = liveTransport 
         {derived.terminal && (
           <section className={`final-result ${derived.terminal.type === 'session.failed' ? 'failed' : ''}`} aria-labelledby="result-heading">
             <p className="kicker">Terminal event received</p>
-            <h2 id="result-heading">{derived.terminal.type === 'session.failed' ? 'Run stopped safely.' : verdict === 'verified' ? 'Cross-account read verified.' : `Run completed: ${text(verdict)}.`}</h2>
+            <h2 id="result-heading">{derived.terminal.type === 'session.failed' ? 'Run stopped safely.' : verdict === 'verified' ? 'Cross-student detail read verified.' : `Run completed: ${text(verdict)}.`}</h2>
             <p>{derived.terminal.explanation}</p>
             <div className="result-facts">
               <div><span>Verdict</span><strong>{text(verdict, 'No verdict')}</strong></div>

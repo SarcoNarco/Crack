@@ -14,8 +14,8 @@ from coordinator.workflow_demo import WorkflowDemoDependencies, run_workflow_dem
 def _contract() -> AppContract:
     return AppContract.model_validate(
         {
-            "routes": [{"method": "GET", "path": "/work-items/mine", "description": "List"}],
-            "roles": ["account-a"],
+            "routes": [{"method": "GET", "path": "/grades/mine", "description": "List"}],
+            "roles": ["Teacher"],
             "assumptions": [],
             "workflow_rules": [],
         }

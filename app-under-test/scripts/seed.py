@@ -1,57 +1,62 @@
-"""Reset the demo notes app to its fixed, verifier-friendly fixture state."""
+"""Reset the synthetic school portal to its fixed verifier-friendly fixture state."""
 
 from app.database import connect, initialize_database
 
 
-ACCOUNTS = (
-    ("account-a", "account_a", "account-a-password", "token-account-a-fixed", "Account A"),
-    ("account-b", "account_b", "account-b-password", "token-account-b-fixed", "Account B"),
+PEOPLE = (
+    ("teacher-001", "teacher", "token-teacher-fixed", "Teacher"),
+    ("student-a", "student", "token-student-a-fixed", "Student A"),
+    ("student-b", "student", "token-student-b-fixed", "Student B"),
 )
-
-RECORDS = (
-    (
-        "note-account-a-001",
-        "account-a",
-        "Account A project note",
-        "Account A private note: renewal discussion scheduled for 2026-09-01.",
-    ),
-    (
-        "note-account-b-001",
-        "account-b",
-        "Account B project note",
-        "Account B private note: vendor budget approved at 48,500 credits.",
-    ),
+CLASSES = (("class-science-101", "teacher-001", "Science 101"),)
+ASSIGNMENTS = (("assignment-ecosystems-001", "class-science-101", "Ecosystems reflection"),)
+SUBMISSIONS = (
+    ("submission-student-a-001", "assignment-ecosystems-001", "student-a", "Student A private reflection."),
+    ("submission-student-b-001", "assignment-ecosystems-001", "student-b", "Student B private reflection."),
 )
-
-WORK_ITEMS = (
-    (
-        "release-account-a-001",
-        "account-a",
-        "Account A release checklist",
-        "draft",
-    ),
+GRADES = (
+    ("grade-student-a-001", "submission-student-a-001", "teacher-001", "Clear analysis.", "draft"),
+    ("grade-student-b-001", "submission-student-b-001", "teacher-001", "Strong use of evidence.", "draft"),
 )
 
 
 def seed() -> None:
+    """Replace only the disposable app's old and current local fixture schema."""
     initialize_database()
     with connect() as connection:
-        connection.execute("DELETE FROM work_items")
-        connection.execute("DELETE FROM records")
-        connection.execute("DELETE FROM accounts")
+        connection.executescript(
+            """
+            DROP TABLE IF EXISTS work_items;
+            DROP TABLE IF EXISTS records;
+            DROP TABLE IF EXISTS accounts;
+            DROP TABLE IF EXISTS grades;
+            DROP TABLE IF EXISTS submissions;
+            DROP TABLE IF EXISTS assignments;
+            DROP TABLE IF EXISTS classes;
+            DROP TABLE IF EXISTS people;
+            """
+        )
+    initialize_database()
+    with connect() as connection:
         connection.executemany(
-            "INSERT INTO accounts (id, username, password, token, display_name) VALUES (?, ?, ?, ?, ?)",
-            ACCOUNTS,
+            "INSERT INTO people (id, role, token, display_name) VALUES (?, ?, ?, ?)", PEOPLE
         )
         connection.executemany(
-            "INSERT INTO records (id, owner_account_id, title, body) VALUES (?, ?, ?, ?)", RECORDS
+            "INSERT INTO classes (id, teacher_id, title) VALUES (?, ?, ?)", CLASSES
         )
         connection.executemany(
-            "INSERT INTO work_items (id, owner_account_id, title, state) VALUES (?, ?, ?, ?)",
-            WORK_ITEMS,
+            "INSERT INTO assignments (id, class_id, title) VALUES (?, ?, ?)", ASSIGNMENTS
+        )
+        connection.executemany(
+            "INSERT INTO submissions (id, assignment_id, student_id, body) VALUES (?, ?, ?, ?)",
+            SUBMISSIONS,
+        )
+        connection.executemany(
+            "INSERT INTO grades (id, submission_id, teacher_id, feedback, state) VALUES (?, ?, ?, ?, ?)",
+            GRADES,
         )
 
 
 if __name__ == "__main__":
     seed()
-    print("Seeded deterministic demo app state.")
+    print("Seeded deterministic synthetic school portal state.")

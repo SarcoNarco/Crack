@@ -1,41 +1,24 @@
 {
   "routes": [
+    {"method": "GET", "path": "/health", "description": "Return the portal health status"},
+    {"method": "GET", "path": "/submissions/mine", "description": "List only the authenticated student's submissions"},
+    {"method": "GET", "path": "/submissions/{submission_id}/grade", "description": "Retrieve one submission and grade detail"},
+    {"method": "GET", "path": "/grades/mine", "description": "List the Teacher's grades"},
+    {"method": "POST", "path": "/grades/{grade_id}/review", "description": "Review a Teacher-owned draft grade"},
+    {"method": "POST", "path": "/grades/{grade_id}/publish", "description": "Publish a Teacher-owned grade"}
+  ],
+  "roles": ["Teacher", "Student A", "Student B"],
+  "assumptions": ["All identities and school-portal fixtures are fixed and synthetic."],
+  "workflow_rules": [
     {
-      "method": "GET",
-      "path": "/health",
-      "description": "Return the status of the app"
-    },
-    {
-      "method": "POST",
-      "path": "/login",
-      "description": "Log in to access app features"
-    },
-    {
-      "method": "GET",
-      "path": "/records/mine",
-      "description": "Retrieve records owned by the authenticated account"
-    },
-    {
-      "method": "GET",
-      "path": "/records/{record_id}",
-      "description": "Retrieve a record by ID"
-    },
-    {
-      "method": "PUT",
-      "path": "/records/{record_id}",
-      "description": "Update a record by ID"
-    },
-    {
-      "method": "DELETE",
-      "path": "/records/{record_id}",
-      "description": "Delete a record by ID"
+      "rule_id": "review_before_publish",
+      "account": "teacher",
+      "states": ["draft", "reviewed", "published"],
+      "list_route": "/grades/mine",
+      "review_route": "/grades/{grade_id}/review",
+      "publish_route": "/grades/{grade_id}/publish",
+      "required_predecessor": "reviewed",
+      "invalid_predecessor": "draft"
     }
-  ],
-  "roles": [
-    "account-a",
-    "account-b"
-  ],
-  "assumptions": [
-    "Only users with 'account-a' or 'account-b' roles have access to the records routes."
   ]
 }

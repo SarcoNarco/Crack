@@ -39,7 +39,7 @@ The journal rejects unknown fields, unknown event names, disallowed metadata key
 2. `preflight.started`, `preflight.completed`
 3. `mapper.activated`, `mapper.completed`
 4. `identity_reset.started`, `identity_reset.completed`
-5. `identity.activated`, `identity.account_b_discovery`, `identity.account_a_retrieval`, `hypothesis.created`, `identity.completed`
+5. `identity.activated`, `identity.student_b_discovery`, `identity.student_a_retrieval`, `hypothesis.created`, `identity.completed`
 6. `verifier_a.activated`, `verifier_a.reset_completed`, `verifier_a.plan_validated`, one or more `verifier_a.call_recorded`, `verifier_a.check_completed`, `verifier_a.completed`
 7. The corresponding `verifier_b.*` events, activated only after Verifier A completes
 8. `consensus.started`, `consensus.completed`
@@ -51,6 +51,6 @@ Any incomplete stage instead ends with one `session.failed`. Downstream activati
 
 ## Safe metadata
 
-Allowlisted metadata includes route counts; provider/model labels already present in committed configuration; synthetic record IDs and owner labels; HTTP status; reset IDs and logical state hashes; plan hashes and step counts; bounded method/path/account call metadata; body hashes rather than bodies; deterministic boolean results; safe run, hypothesis, and finding IDs; report hashes; and the fixed same-origin report URL.
+Allowlisted metadata includes route counts; provider/model labels already present in committed configuration; synthetic submission IDs and student labels; HTTP status; reset IDs and logical state hashes; plan hashes and step counts; bounded method/path/role call metadata; body hashes rather than bodies; deterministic boolean results; safe run, hypothesis, and finding IDs; report hashes; and the fixed same-origin report URL.
 
 Events never contain API keys, bearer tokens, environment values, prompts, raw model responses, chain-of-thought, source contents, database contents or paths, authorization headers, arbitrary exceptions, or stack traces. React renders all values as escaped text and never uses `dangerouslySetInnerHTML`.

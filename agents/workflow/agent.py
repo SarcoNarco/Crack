@@ -1,4 +1,4 @@
-"""Run one bounded, contract-derived workflow business-rule check."""
+"""Run one bounded, contract-derived grade-workflow business-rule check."""
 
 from __future__ import annotations
 
@@ -21,22 +21,22 @@ from scope_controller import call_app_endpoint, record_evidence, submit_hypothes
 
 _CONTRACT_PATH = Path(__file__).resolve().parents[1] / "mapper" / "output" / "app_contract.json"
 _LEDGER_DATABASE_PATH = Path(__file__).resolve().parents[2] / "data" / "ledger.db"
-_MAX_ENDPOINT_CALLS = 5
-_ACCOUNT_A_TOKEN = "token-account-a-fixed"
+_MAX_ENDPOINT_CALLS = 2
+_TEACHER_TOKEN = "token-teacher-fixed"
 _STRUCTURED_OUTPUT = {"type": "json_object"}
-WORKFLOW_RULE_ID = "approval_before_publish"
-WORKFLOW_APP_RULE = "WORKFLOW: approval is required before publishing a work item"
+WORKFLOW_RULE_ID = "review_before_publish"
+WORKFLOW_APP_RULE = "WORKFLOW: a teacher must review a grade before publishing it"
 _RULE_SPEC = {
     "rule_id": WORKFLOW_RULE_ID,
-    "account": "account_a",
-    "states": ("draft", "approved", "published"),
-    "list_route": "/work-items/mine",
-    "approve_route": "/work-items/{work_item_id}/approve",
-    "publish_route": "/work-items/{work_item_id}/publish",
-    "required_predecessor": "approved",
+    "account": "teacher",
+    "states": ("draft", "reviewed", "published"),
+    "list_route": "/grades/mine",
+    "review_route": "/grades/{grade_id}/review",
+    "publish_route": "/grades/{grade_id}/publish",
+    "required_predecessor": "reviewed",
     "invalid_predecessor": "draft",
 }
-_DECLARED_SCOPE = "bounded contract-derived Account A workflow transition checks"
+_DECLARED_SCOPE = "bounded contract-derived Teacher grade transition checks"
 
 
 class WorkflowError(RuntimeError):
@@ -52,24 +52,24 @@ class ContractRoute(BaseModel):
 class WorkflowRule(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    rule_id: Literal["approval_before_publish"]
-    account: Literal["account_a"]
+    rule_id: Literal["review_before_publish"]
+    account: Literal["teacher"]
     states: tuple[
-        Literal["draft", "approved", "published"],
-        Literal["draft", "approved", "published"],
-        Literal["draft", "approved", "published"],
+        Literal["draft", "reviewed", "published"],
+        Literal["draft", "reviewed", "published"],
+        Literal["draft", "reviewed", "published"],
     ]
-    list_route: Literal["/work-items/mine"]
-    approve_route: Literal["/work-items/{work_item_id}/approve"]
-    publish_route: Literal["/work-items/{work_item_id}/publish"]
-    required_predecessor: Literal["approved"]
+    list_route: Literal["/grades/mine"]
+    review_route: Literal["/grades/{grade_id}/review"]
+    publish_route: Literal["/grades/{grade_id}/publish"]
+    required_predecessor: Literal["reviewed"]
     invalid_predecessor: Literal["draft"]
 
     @field_validator("states")
     @classmethod
     def states_are_fixed(cls, value: tuple[str, str, str]) -> tuple[str, str, str]:
         if value != _RULE_SPEC["states"]:
-            raise ValueError("workflow states must be draft, approved, published in order")
+            raise ValueError("workflow states must be draft, reviewed, published in order")
         return value
 
 
@@ -83,11 +83,9 @@ class AppContract(BaseModel):
 
 
 class WorkflowPlan(BaseModel):
-    """The model can select only the one contract-declared workflow rule."""
-
     model_config = ConfigDict(extra="forbid")
 
-    workflow_rule_id: Literal["approval_before_publish"]
+    workflow_rule_id: Literal["review_before_publish"]
 
 
 class HypothesisWording(BaseModel):
@@ -101,7 +99,7 @@ class HypothesisWording(BaseModel):
 class TestResult:
     method: str
     path: str | None
-    as_account: str
+    as_role: str
     purpose: str
     status_code: int | None
     result: str
@@ -141,7 +139,7 @@ def _declared_rule(contract: AppContract) -> WorkflowRule:
     routes = {(route.method.upper(), route.path) for route in contract.routes}
     expected_routes = {
         ("GET", rule.list_route),
-        ("POST", rule.approve_route),
+        ("POST", rule.review_route),
         ("POST", rule.publish_route),
     }
     if not expected_routes.issubset(routes):
@@ -151,85 +149,82 @@ def _declared_rule(contract: AppContract) -> WorkflowRule:
 
 def _planner_prompt(rule: WorkflowRule) -> str:
     return (
-        "You are selecting one bounded business-rule check in a contained synthetic app. "
+        "You are selecting one bounded business-rule check in a contained synthetic school portal. "
         "Return only JSON exactly shaped as "
-        '{"workflow_rule_id":"approval_before_publish"}. '
-        "The only available rule requires approval before publish for Account A. Do not choose "
-        "routes, methods, accounts, work-item IDs, states, credentials, hosts, calls, findings, "
-        "or any extra JSON fields.\n\nDECLARED WORKFLOW RULE:\n"
-        f"{rule.model_dump_json(indent=2)}"
+        '{"workflow_rule_id":"review_before_publish"}. '
+        "The only available rule requires Teacher review before publishing a grade. Do not choose "
+        "routes, methods, roles, grade IDs, states, credentials, hosts, calls, findings, or extra JSON fields.\n\n"
+        f"DECLARED WORKFLOW RULE:\n{rule.model_dump_json(indent=2)}"
     )
 
 
-def _hypothesis_prompt(work_item_id: str) -> str:
+def _hypothesis_prompt(grade_id: str) -> str:
     return (
-        "You are wording an unverified workflow hypothesis for a contained synthetic app. "
-        "Ordinary code observed Account A list a draft work item and then receive a successful "
-        f"publish transition for that same item ({work_item_id}) without an approved predecessor. "
+        "You are wording an unverified workflow hypothesis for a contained synthetic school portal. "
+        "Ordinary code observed the Teacher list a draft grade and then receive a successful "
+        f"publish transition for that same grade ({grade_id}) without a reviewed predecessor. "
         "Return only JSON shaped exactly as "
         '{"concise_claim":"...","expected_evidence":"..."}. '
         "Do not claim verification, severity, remediation, consensus, or a finding."
     )
 
 
-def _find_draft_work_item(response: dict[str, object]) -> str | None:
+def _find_draft_grade(response: dict[str, object]) -> str | None:
     if response.get("status_code") != 200:
         return None
     body = response.get("body")
-    if not isinstance(body, dict) or not isinstance(body.get("work_items"), list):
+    if not isinstance(body, dict) or not isinstance(body.get("grades"), list):
         return None
-    for item in body["work_items"]:
-        if not isinstance(item, dict):
-            continue
-        item_id = item.get("id")
+    for grade in body["grades"]:
         if (
-            isinstance(item_id, str)
-            and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", item_id)
-            and item.get("owner_account_id") == "account-a"
-            and item.get("state") == "draft"
+            isinstance(grade, dict)
+            and isinstance(grade.get("grade_id"), str)
+            and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", grade["grade_id"])
+            and grade.get("teacher_id") == "teacher-001"
+            and grade.get("state") == "draft"
         ):
-            return item_id
+            return grade["grade_id"]
     return None
 
 
 def deterministic_workflow_check(
     listed_response: dict[str, object] | None,
     publish_response: dict[str, object] | None,
-    work_item_id: str | None,
+    grade_id: str | None,
 ) -> tuple[bool, str]:
-    """Decide the draft-to-published rule violation without model input."""
-    if work_item_id is None or listed_response is None or publish_response is None:
-        return False, "No owned draft work item was safely identified and published"
-    if _find_draft_work_item(listed_response) != work_item_id:
-        return False, "The listed item was not an Account A-owned draft work item"
+    """Decide the draft-to-published grade defect without model input."""
+    if grade_id is None or listed_response is None or publish_response is None:
+        return False, "No Teacher-owned draft grade was safely identified and published"
+    if _find_draft_grade(listed_response) != grade_id:
+        return False, "The listed grade was not a Teacher-owned draft grade"
     body = publish_response.get("body")
     if not isinstance(body, dict):
         return False, "The publish response did not have the required object shape"
-    success = publish_response.get("status_code")
-    if not isinstance(success, int) or not 200 <= success < 300:
-        return False, "Publishing the draft work item was rejected"
+    status_code = publish_response.get("status_code")
+    if not isinstance(status_code, int) or not 200 <= status_code < 300:
+        return False, "Publishing the draft grade was rejected"
     if (
-        body.get("id") == work_item_id
+        body.get("grade_id") == grade_id
         and body.get("previous_state") == "draft"
         and body.get("state") == "published"
     ):
-        return True, "A draft Account A work item was published without the required approved state"
-    return False, "The publish response did not prove a draft-to-published transition"
+        return True, "A draft Teacher-owned grade was published without the required reviewed state"
+    return False, "The publish response did not prove a draft-to-published grade transition"
 
 
-def _response_summary(response: dict[str, object] | None, result: str) -> str:
-    if response is None:
-        return json.dumps({"result": result}, sort_keys=True)
+def _response_summary(response: dict[str, object], result: str) -> str:
     body = response.get("body")
-    metadata: dict[str, object] = {
-        "result": result,
-        "status_code": response.get("status_code"),
-        "body_type": type(body).__name__,
-        "body_sha256": hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest(),
-    }
-    if isinstance(body, dict):
-        metadata["body_keys"] = sorted(body)
-    return json.dumps(metadata, sort_keys=True)
+    body_hash = hashlib.sha256(
+        json.dumps(body, sort_keys=True, default=str).encode()
+    ).hexdigest()
+    return json.dumps(
+        {
+            "result": result,
+            "status_code": response.get("status_code"),
+            "body_sha256": body_hash,
+        },
+        sort_keys=True,
+    )
 
 
 def _record_run(*, run_id: str, started_at: str, status: str, app_version: str) -> None:
@@ -258,16 +253,16 @@ def run_workflow(
     run_recorder: Callable[..., None] = _record_run,
     progress: ProgressCallback | None = None,
 ) -> WorkflowRunResult:
-    """Run one fixed two-call invalid transition test through the scope controller."""
+    """Run one fixed two-call draft-grade publish check through the scope controller."""
     started_at = datetime.now(UTC).isoformat()
     run_id = f"workflow:{uuid.uuid4()}"
     contract = _load_contract(contract_path)
-    app_version = f"contract-sha256:{hashlib.sha256(contract.model_dump_json().encode()).hexdigest()[:16]}"
+    contract_hash = hashlib.sha256(contract.model_dump_json().encode()).hexdigest()[:16]
+    app_version = f"school-portal-contract-sha256:{contract_hash}"
     model_client = client or get_client("workflow")
     tests: list[TestResult] = []
     hypothesis_ids: list[str] = []
     hypothesis_claims: list[str] = []
-
     try:
         rule = _declared_rule(contract)
         plan = _parse_model_json(
@@ -280,12 +275,24 @@ def run_workflow(
         assert isinstance(plan, WorkflowPlan)
         if plan.workflow_rule_id != rule.rule_id:
             raise WorkflowError("Workflow plan selected an undeclared rule")
-
-        listed = endpoint_caller("GET", rule.list_route, _ACCOUNT_A_TOKEN)
-        work_item_id = _find_draft_work_item(listed)
+        listed = endpoint_caller("GET", rule.list_route, _TEACHER_TOKEN)
+        grade_id = _find_draft_grade(listed)
+        list_result = (
+            "observed Teacher-owned draft grade"
+            if grade_id
+            else "did not observe Teacher-owned draft grade"
+        )
         list_status = listed.get("status_code")
-        list_result = "observed owned draft work item" if work_item_id else "did not observe owned draft work item"
-        tests.append(TestResult("GET", rule.list_route, "account_a", "observe_owned_draft", list_status if isinstance(list_status, int) else None, list_result))
+        tests.append(
+            TestResult(
+                "GET",
+                rule.list_route,
+                "teacher",
+                "observe_owned_draft_grade",
+                list_status if isinstance(list_status, int) else None,
+                list_result,
+            )
+        )
         evidence_recorder(
             run_id=run_id,
             sequence_number=1,
@@ -296,29 +303,38 @@ def run_workflow(
         )
         notify(
             progress,
-            event_type="workflow.draft_discovery",
+            event_type="workflow.draft_grade_discovery",
             stage="workflow",
             state="completed",
             logical_role="workflow",
-            headline="Account A work-item discovery completed",
-            explanation="Bounded code identified only an Account A-owned draft work item.",
-            metadata={"status_code": list_status if isinstance(list_status, int) else None, "work_item_id": work_item_id},
+            headline="Teacher grade discovery completed",
+            explanation="Bounded code identified only a Teacher-owned draft grade.",
+            metadata={"status_code": list_status, "grade_id": grade_id},
             reference=f"scope-controller://call_app_endpoint/GET{rule.list_route}",
         )
-
-        publish_response: dict[str, object] | None = None
-        if work_item_id is not None:
-            publish_path = rule.publish_route.replace("{work_item_id}", work_item_id)
-            publish_response = endpoint_caller("POST", publish_path, _ACCOUNT_A_TOKEN)
-            satisfied, result = deterministic_workflow_check(listed, publish_response, work_item_id)
-            publish_status = publish_response.get("status_code")
-            tests.append(TestResult("POST", publish_path, "account_a", "attempt_publish_without_approval", publish_status if isinstance(publish_status, int) else None, result))
+        if grade_id is not None:
+            publish_path = rule.publish_route.replace("{grade_id}", grade_id)
+            published = endpoint_caller("POST", publish_path, _TEACHER_TOKEN)
+            satisfied, result = deterministic_workflow_check(listed, published, grade_id)
+            publish_status = published.get("status_code")
+            tests.append(
+                TestResult(
+                    "POST",
+                    publish_path,
+                    "teacher",
+                    "attempt_publish_without_review",
+                    publish_status if isinstance(publish_status, int) else None,
+                    result,
+                )
+            )
             evidence_recorder(
                 run_id=run_id,
                 sequence_number=2,
                 action_type="workflow_test_result",
-                request_response_summary=_response_summary(publish_response, result),
-                artifact_reference=f"scope-controller://call_app_endpoint/POST{publish_path}",
+                request_response_summary=_response_summary(published, result),
+                artifact_reference=(
+                    f"scope-controller://call_app_endpoint/POST{publish_path}"
+                ),
                 policy_decision="allowed",
             )
             notify(
@@ -327,22 +343,32 @@ def run_workflow(
                 stage="workflow",
                 state="completed",
                 logical_role="workflow",
-                headline="Draft publish transition checked",
-                explanation="Ordinary code evaluated the recorded response against the declared predecessor rule.",
-                metadata={"status_code": publish_status if isinstance(publish_status, int) else None, "work_item_id": work_item_id, "satisfied": satisfied},
+                headline="Draft grade publish transition checked",
+                explanation=(
+                    "Ordinary code evaluated the recorded response against the declared "
+                    "reviewed predecessor rule."
+                ),
+                metadata={
+                    "status_code": publish_status,
+                    "grade_id": grade_id,
+                    "satisfied": satisfied,
+                },
                 reference=f"scope-controller://call_app_endpoint/POST{publish_path}",
             )
             if satisfied:
                 wording = _parse_model_json(
                     model_client.complete(
-                        [{"role": "user", "content": _hypothesis_prompt(work_item_id)}],
+                        [{"role": "user", "content": _hypothesis_prompt(grade_id)}],
                         response_format=_STRUCTURED_OUTPUT,
                     ),
                     HypothesisWording,
                 )
                 assert isinstance(wording, HypothesisWording)
                 hypothesis_id = hypothesis_submitter(
-                    run_id, WORKFLOW_APP_RULE, wording.concise_claim, wording.expected_evidence
+                    run_id,
+                    WORKFLOW_APP_RULE,
+                    wording.concise_claim,
+                    wording.expected_evidence,
                 )
                 hypothesis_ids.append(hypothesis_id)
                 hypothesis_claims.append(wording.concise_claim)
@@ -353,15 +379,23 @@ def run_workflow(
                     state="completed",
                     logical_role="workflow",
                     headline="Unverified workflow hypothesis created",
-                    explanation="The hypothesis was recorded only after code observed draft-to-published success.",
+                    explanation=(
+                        "The hypothesis was recorded only after code observed "
+                        "draft-to-published grade success."
+                    ),
                     metadata={"hypothesis_id": hypothesis_id},
                     reference=f"ledger://hypothesis/{hypothesis_id}",
                 )
-
         if len(tests) > _MAX_ENDPOINT_CALLS:
             raise WorkflowError("Workflow endpoint-call cap exceeded")
         run_recorder(run_id=run_id, started_at=started_at, status="completed", app_version=app_version)
-        return WorkflowRunResult(run_id, tests, hypothesis_ids, hypothesis_claims, False)
+        return WorkflowRunResult(
+            run_id,
+            tests,
+            hypothesis_ids,
+            hypothesis_claims,
+            False,
+        )
     except Exception:
         run_recorder(run_id=run_id, started_at=started_at, status="failed", app_version=app_version)
         raise

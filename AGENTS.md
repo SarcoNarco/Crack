@@ -4,20 +4,22 @@ Crack is a local-first, contained, verification-first security lab for running b
 
 ## Directory layout
 
-- `app-under-test/` — Empty placeholder for the disposable demo app added in Sprint 1.
-- `coordinator/` — Minimal FastAPI coordinator service for the local lab.
-- `ledger/` — Raw SQLite schema and migration/init assets for the evidence ledger.
-- `agents/` — Empty placeholder for later agent implementations.
-- `scope-controller/` — Empty placeholder for the Sprint 2 scope controller.
-- `ui/` — Empty placeholder for the later React and TypeScript interface.
-- `docker-compose.yml` — Local Compose definition for the coordinator service only.
+- `app-under-test/` — Disposable FastAPI school portal with deterministic synthetic fixtures.
+- `coordinator/` — Fixed local workflow coordinator and browser-safe presentation-event service.
+- `ledger/` — Append-only SQLite evidence schema, initialization, and read boundaries.
+- `agents/` — Bounded mapper, identity, workflow, verifier, and model-router implementations.
+- `scope-controller/` — Code-enforced fixed-origin gateway for source, reset, app, and ledger capabilities.
+- `ui/` — Deterministic terminal read view over ledger-owned evidence.
+- `frontend/` — React and TypeScript local operations-console presentation.
+- `reports/` — Deterministic ledger-backed Markdown and standalone HTML report renderer.
+- `docker-compose.yml` — Loopback-only local topology for the portal and coordinator.
 
 ## Tech stack
 
 - Python with FastAPI for the backend
 - SQLite for the ledger
 - Docker Compose for isolation
-- React with TypeScript planned for a later sprint, not Sprint 0
+- React with TypeScript for the local presentation console
 
 ## Security invariants
 
@@ -92,6 +94,10 @@ Added the live red-team operations console as a React and TypeScript application
 Live workflow demo run completed. Model router config updated: workflow role swapped from `llama-3.3-70b-versatile` (retired from Groq catalog) to `qwen/qwen3.6-27b`. Catalog verification confirmed all four active models: `openai/gpt-oss-20b` (mapper), `qwen/qwen3.6-27b` (workflow), `openai/gpt-oss-120b` (verifier_a), `gemini-3.5-flash` (verifier_b).
 
 Live session `workflow_demo` completed. Workflow agent run `workflow:d3b6961f-4c8e-4fa4-ad23-4a20e291a8a2` identified the draft→published skip defect from the app contract, submitted hypothesis `5f4806cb-0ebd-43de-ad8e-3167ff20627a`. Verifier run `verifier:20976c6f-5928-498e-a06a-d2f081def3d5` used distinct reset UUIDs `859b8dd3-50c3-4ea2-9b48-1a7142d40fa5` and `24021d5b-80e4-4c7c-9014-689ddf55ee3d` with shared logical hash `e7cd562c8b9a7641`; verifier_a and verifier_b proposed identical plans and both independently confirmed Account A published `release-account-a-001` directly from draft without the required approved state. Consensus returned `verified`; finding `68fdfb61-879f-4ca7-a6a6-db6a20fd1cbd` recorded with remediation to enforce server-side approval gate before publish. Ledger SHA-256 after run: `22ae848aa3e6dd758946b6c90a60e61cc8d24ea04d75d810a297bcc9dbb3ff37`.
+
+### Sprint 14
+
+Migrated the disposable target offline-only to a deterministic school portal with fixed Teacher, Student A, and Student B identities; fixed class, assignment, submission, and grade routes; and no live or provider run. The only intended defects are Student A's exact-ID read of Student B's private submission/grade detail and Teacher's direct draft-to-published grade transition despite the required `draft -> reviewed -> published` lifecycle. Fixed origin, role/token, method, and route containment; code-owned predicates/verdicts; sequential independent verifier resets; metadata-only evidence; verified-only findings; and ledger authority remain preserved. Offline acceptance currently passes 153 Python tests, 19 frontend tests, TypeScript checking, the production build, Compose configuration, and diff validation; the ledger is not modified.
 
 ## Known follow-ups
 

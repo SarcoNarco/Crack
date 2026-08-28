@@ -1,4 +1,4 @@
-"""Run one bounded, contract-driven cross-account authorization check."""
+"""Run one bounded, contract-driven cross-student authorization check."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -21,11 +21,12 @@ from scope_controller import call_app_endpoint, record_evidence, submit_hypothes
 
 _CONTRACT_PATH = Path(__file__).resolve().parents[1] / "mapper" / "output" / "app_contract.json"
 _LEDGER_DATABASE_PATH = Path(__file__).resolve().parents[2] / "data" / "ledger.db"
-_MAX_ENDPOINT_CALLS = 5
-_ACCOUNT_A_TOKEN = "token-account-a-fixed"
-_ACCOUNT_B_TOKEN = "token-account-b-fixed"
-_DECLARED_SCOPE = "bounded contract-derived Account A to Account B authorization checks"
+_MAX_ENDPOINT_CALLS = 2
+_STUDENT_A_TOKEN = "token-student-a-fixed"
+_STUDENT_B_TOKEN = "token-student-b-fixed"
+_DECLARED_SCOPE = "bounded contract-derived Student A to Student B submission-detail authorization checks"
 _STRUCTURED_OUTPUT = {"type": "json_object"}
+_AUTHORIZATION_APP_RULE = "GET /submissions/{submission_id}/grade must enforce student ownership"
 
 
 class ContractRoute(BaseModel):
@@ -41,7 +42,7 @@ class AppContract(BaseModel):
 
 
 class IdentityPlan(BaseModel):
-    """The model may select only a declared record-by-ID route, never IDs or calls."""
+    """The model may select only a declared submission-detail route."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -63,7 +64,7 @@ class IdentityError(RuntimeError):
 class TestResult:
     method: str
     path: str | None
-    as_account: str
+    as_role: str
     purpose: str
     status_code: int | None
     result: str
@@ -82,52 +83,50 @@ def _normalise_identity(value: object) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(value).lower())
 
 
-def _records_routes(contract: AppContract) -> list[ContractRoute]:
+def _submission_routes(contract: AppContract) -> list[ContractRoute]:
     return [
         route
         for route in contract.routes
-        if route.method.upper() == "GET" and "/records/" in route.path and "{" in route.path
+        if route.method.upper() == "GET"
+        and route.path == "/submissions/{submission_id}/grade"
     ]
 
 
-def _my_records_route(contract: AppContract) -> ContractRoute | None:
+def _my_submissions_route(contract: AppContract) -> ContractRoute | None:
     return next(
         (
             route
             for route in contract.routes
-            if route.method.upper() == "GET" and route.path == "/records/mine"
+            if route.method.upper() == "GET" and route.path == "/submissions/mine"
         ),
         None,
     )
 
 
 def _planner_prompt(contract: AppContract) -> str:
-    record_routes = [route.model_dump() for route in _records_routes(contract)]
-    contract_json = contract.model_dump_json(indent=2)
+    routes = [route.model_dump() for route in _submission_routes(contract)]
     return (
-        "You are selecting the record-by-ID route for a contained authorization test. Work only "
+        "You are selecting the submission-detail route for a contained authorization test. Work only "
         "from this app contract. Return only JSON matching exactly "
-        '{"boundary_route":"/records/{record_id}"}. Select one listed GET route that contains '
-        "{record_id}; do not select IDs, accounts, calls, writes, login, or routes outside the "
-        "following choices: "
-        f"{json.dumps(record_routes)}.\n\nAPP CONTRACT:\n{contract_json}"
+        '{"boundary_route":"/submissions/{submission_id}/grade"}. Select the listed GET route; '
+        "do not select IDs, roles, calls, writes, login, or routes outside the following choices: "
+        f"{json.dumps(routes)}.\n\nAPP CONTRACT:\n{contract.model_dump_json(indent=2)}"
     )
 
 
-def _hypothesis_prompt(*, method: str, route: str, record_id: str) -> str:
+def _hypothesis_prompt(*, method: str, route: str, submission_id: str) -> str:
     return (
-        "You are wording an unverified authorization hypothesis for a contained demo app. "
-        "The code observed that Account A received a successful response for a record which "
-        f"Account B had just observed as its own, via {method} {route.replace('{record_id}', record_id)}. "
+        "You are wording an unverified authorization hypothesis for a contained synthetic school portal. "
+        "Ordinary code observed Student A receive a successful response for a submission which "
+        f"Student B had just observed as their own, via {method} {route.replace('{submission_id}', submission_id)}. "
         "Return only JSON exactly shaped as "
         '{"concise_claim":"...","expected_evidence":"..."}. '
-        "State the route and missing ownership boundary precisely. Do not call it verified and "
+        "State the route and missing student ownership boundary precisely. Do not call it verified and "
         "do not add severity or remediation claims."
     )
 
 
 def _parse_model_json(raw_response: str, schema: type[BaseModel]) -> BaseModel:
-    """Validate JSON after removing one complete Qwen reasoning prefix, if present."""
     thinking_prefix = re.fullmatch(
         r"\s*<think>.*?</think>\s*(?P<response>.*)", raw_response, re.DOTALL
     )
@@ -148,70 +147,56 @@ def _load_contract(contract_path: Path) -> AppContract:
 
 
 def _contract_route_for(planned_path: str, contract: AppContract) -> ContractRoute | None:
-    """Resolve a declared record template from the model's template or concrete example."""
-    for route in _records_routes(contract):
-        if planned_path == route.path:
-            return route
-        pattern = re.escape(route.path).replace(
-            re.escape("{record_id}"), r"[A-Za-z0-9_-]{1,100}"
-        )
-        if re.fullmatch(pattern, planned_path):
-            return route
-    return None
+    return next(
+        (
+            route
+            for route in _submission_routes(contract)
+            if planned_path == route.path
+        ),
+        None,
+    )
 
 
-def _safe_record_id(value: str | None) -> str | None:
+def _safe_submission_id(value: object) -> str | None:
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", value):
         return None
     return value
 
 
-def _find_first(body: object, keys: set[str]) -> object | None:
-    if isinstance(body, dict):
-        for key, value in body.items():
-            if key.lower() in keys and value is not None:
-                return value
-        for value in body.values():
-            found = _find_first(value, keys)
-            if found is not None:
-                return found
-    elif isinstance(body, list):
-        for value in body:
-            found = _find_first(value, keys)
-            if found is not None:
-                return found
+def _walk_objects(value: object):
+    if isinstance(value, dict):
+        yield value
+        for nested in value.values():
+            yield from _walk_objects(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            yield from _walk_objects(nested)
+
+
+def _student_b_submission_id(response: dict[str, object]) -> str | None:
+    if response.get("status_code") != 200:
+        return None
+    for item in _walk_objects(response.get("body")):
+        submission_id = _safe_submission_id(item.get("submission_id"))
+        if submission_id and _normalise_identity(item.get("student_id")) == "studentb":
+            return submission_id
     return None
 
 
-def _account_b_record_id(response: dict[str, object]) -> str | None:
+def _cross_student_success(response: dict[str, object], submission_id: str) -> bool:
     body = response.get("body")
-    owner = _find_first(
-        body, {"owner", "owner_id", "owner_account_id", "account", "account_id"}
+    return (
+        isinstance(response.get("status_code"), int)
+        and 200 <= response["status_code"] < 300
+        and isinstance(body, dict)
+        and body.get("submission_id") == submission_id
+        and _normalise_identity(body.get("student_id")) == "studentb"
+        and _safe_submission_id(body.get("grade_id")) is not None
     )
-    record_id = _find_first(body, {"id", "record_id"})
-    if _normalise_identity(owner) != "accountb":
-        return None
-    return _safe_record_id(str(record_id))
 
 
-def _cross_account_success(response: dict[str, object], account_b_record_id: str) -> bool:
-    status_code = response.get("status_code")
-    if not isinstance(status_code, int) or not 200 <= status_code < 300:
-        return False
-    body = response.get("body")
-    response_id = _safe_record_id(str(_find_first(body, {"id", "record_id"})))
-    owner = _find_first(
-        body, {"owner", "owner_id", "owner_account_id", "account", "account_id"}
-    )
-    return response_id == account_b_record_id and _normalise_identity(owner) == "accountb"
-
-
-def _response_summary(response: dict[str, object] | None, result: str) -> str:
-    if response is None:
-        return json.dumps({"result": result}, sort_keys=True)
-    return json.dumps(
-        {"result": result, "status_code": response.get("status_code")}, sort_keys=True
-    )
+def _response_summary(response: dict[str, object], result: str) -> str:
+    return json.dumps({"result": result, "status_code": response.get("status_code")}, sort_keys=True)
 
 
 def _record_run(*, run_id: str, started_at: str, status: str, app_version: str) -> None:
@@ -240,16 +225,16 @@ def run_identity(
     run_recorder: Callable[..., None] = _record_run,
     progress: ProgressCallback | None = None,
 ) -> IdentityRunResult:
-    """Execute one LLM-planned pass, with a hard cap of five app calls."""
+    """Execute exactly two normal-flow GET calls when Student B discovery succeeds."""
     started_at = datetime.now(UTC).isoformat()
     run_id = f"identity:{uuid.uuid4()}"
     contract = _load_contract(contract_path)
-    app_version = f"contract-sha256:{hashlib.sha256(contract.model_dump_json().encode()).hexdigest()[:16]}"
+    contract_hash = hashlib.sha256(contract.model_dump_json().encode()).hexdigest()[:16]
+    app_version = f"school-portal-contract-sha256:{contract_hash}"
     model_client = client or get_client("identity")
     tests: list[TestResult] = []
     hypothesis_ids: list[str] = []
     hypothesis_claims: list[str] = []
-
     try:
         plan = _parse_model_json(
             model_client.complete(
@@ -259,107 +244,126 @@ def run_identity(
             IdentityPlan,
         )
         assert isinstance(plan, IdentityPlan)
-        discovery_route = _my_records_route(contract)
+        discovery_route = _my_submissions_route(contract)
         boundary_route = _contract_route_for(plan.boundary_route, contract)
         if discovery_route is None or boundary_route is None:
             raise IdentityError(
-                "App contract must declare GET /records/mine and a GET /records/{record_id} route"
+                "App contract must declare Student B discovery and a submission-grade detail route"
             )
 
-        discovery_response = endpoint_caller("GET", discovery_route.path, _ACCOUNT_B_TOKEN)
-        account_b_record_id = _account_b_record_id(discovery_response)
+        discovery = endpoint_caller("GET", discovery_route.path, _STUDENT_B_TOKEN)
+        submission_id = _student_b_submission_id(discovery)
         discovery_result = (
-            "observed Account B-owned record"
-            if account_b_record_id is not None
-            else "did not observe an Account B-owned record"
+            "observed Student B-owned submission"
+            if submission_id
+            else "did not observe a Student B-owned submission"
         )
-        discovery_status = discovery_response.get("status_code")
+        discovery_status = discovery.get("status_code")
         tests.append(
             TestResult(
-                "GET", discovery_route.path, "account_b", "observe_account_b_record",
-                discovery_status if isinstance(discovery_status, int) else None, discovery_result,
+                "GET",
+                discovery_route.path,
+                "student_b",
+                "observe_student_b_submission",
+                discovery_status if isinstance(discovery_status, int) else None,
+                discovery_result,
             )
         )
         evidence_recorder(
-            run_id=run_id, sequence_number=1, action_type="identity_test_result",
-            request_response_summary=_response_summary(discovery_response, discovery_result),
-            artifact_reference=f"scope-controller://call_app_endpoint/GET{discovery_route.path}",
+            run_id=run_id,
+            sequence_number=1,
+            action_type="identity_test_result",
+            request_response_summary=_response_summary(discovery, discovery_result),
+            artifact_reference=(
+                f"scope-controller://call_app_endpoint/GET{discovery_route.path}"
+            ),
             policy_decision="allowed",
         )
         notify(
             progress,
-            event_type="identity.account_b_discovery",
+            event_type="identity.student_b_discovery",
             stage="authorization",
             state="completed",
             logical_role="identity",
-            headline="Account B record discovery completed",
+            headline="Student B submission discovery completed",
             explanation=(
-                "The authorization tester used the fixed Account B identity to list only "
-                "that synthetic account's records."
+                "The authorization tester used Student B's fixed identity to list only "
+                "that student's submissions."
             ),
             metadata={
-                "status_code": discovery_status if isinstance(discovery_status, int) else None,
-                "record_id": account_b_record_id,
-                "owner_account": "account_b" if account_b_record_id else None,
+                "status_code": discovery_status,
+                "submission_id": submission_id,
+                "student": "student_b" if submission_id else None,
             },
             reference=f"scope-controller://call_app_endpoint/GET{discovery_route.path}",
         )
 
-        if account_b_record_id is not None:
-            boundary_path = boundary_route.path.replace("{record_id}", account_b_record_id)
-            boundary_response = endpoint_caller("GET", boundary_path, _ACCOUNT_A_TOKEN)
-            boundary_result = (
-                "boundary violation: Account A received Account B record"
-                if _cross_account_success(boundary_response, account_b_record_id)
-                else "no cross-account boundary violation observed"
+        if submission_id is not None:
+            detail_path = boundary_route.path.replace("{submission_id}", submission_id)
+            detail = endpoint_caller("GET", detail_path, _STUDENT_A_TOKEN)
+            violated = _cross_student_success(detail, submission_id)
+            detail_result = (
+                "boundary violation: Student A received Student B submission grade detail"
+                if violated
+                else "no cross-student boundary violation observed"
             )
-            boundary_status = boundary_response.get("status_code")
+            detail_status = detail.get("status_code")
             tests.append(
                 TestResult(
-                    "GET", boundary_path, "account_a", "cross_account_boundary",
-                    boundary_status if isinstance(boundary_status, int) else None, boundary_result,
+                    "GET",
+                    detail_path,
+                    "student_a",
+                    "cross_student_submission_detail",
+                    detail_status if isinstance(detail_status, int) else None,
+                    detail_result,
                 )
             )
             evidence_recorder(
-                run_id=run_id, sequence_number=2, action_type="identity_test_result",
-                request_response_summary=_response_summary(boundary_response, boundary_result),
-                artifact_reference=f"scope-controller://call_app_endpoint/GET{boundary_path}",
+                run_id=run_id,
+                sequence_number=2,
+                action_type="identity_test_result",
+                request_response_summary=_response_summary(detail, detail_result),
+                artifact_reference=f"scope-controller://call_app_endpoint/GET{detail_path}",
                 policy_decision="allowed",
             )
-            returned_id = _safe_record_id(str(_find_first(boundary_response.get("body"), {"id", "record_id"})))
-            returned_owner = _find_first(
-                boundary_response.get("body"),
-                {"owner", "owner_id", "owner_account_id", "account", "account_id"},
-            )
+            body = detail.get("body") if isinstance(detail.get("body"), dict) else {}
             notify(
                 progress,
-                event_type="identity.account_a_retrieval",
+                event_type="identity.student_a_retrieval",
                 stage="authorization",
                 state="completed",
                 logical_role="identity",
-                headline="Account A cross-account retrieval completed",
+                headline="Student A cross-student detail retrieval completed",
                 explanation=(
-                    "The tester requested the exact Account B record through the fixed "
-                    "Account A identity and recorded the safe result metadata."
+                    "The tester requested Student B's exact discovered submission through "
+                    "Student A's fixed identity and recorded only safe metadata."
                 ),
                 metadata={
-                    "status_code": boundary_status if isinstance(boundary_status, int) else None,
-                    "requested_record_id": account_b_record_id,
-                    "returned_record_id": returned_id,
-                    "returned_owner": (
-                        "account_b" if _normalise_identity(returned_owner) == "accountb" else "other"
+                    "status_code": detail_status,
+                    "requested_submission_id": submission_id,
+                    "returned_submission_id": body.get("submission_id"),
+                    "returned_student": (
+                        "student_b"
+                        if _normalise_identity(body.get("student_id")) == "studentb"
+                        else "other"
                     ),
-                    "exact_record_match": boundary_result.startswith("boundary violation"),
+                    "exact_submission_match": violated,
                 },
-                reference=f"scope-controller://call_app_endpoint/GET{boundary_path}",
+                reference=f"scope-controller://call_app_endpoint/GET{detail_path}",
             )
-
-            if boundary_result.startswith("boundary violation"):
+            if violated:
                 wording = _parse_model_json(
                     model_client.complete(
-                        [{"role": "user", "content": _hypothesis_prompt(
-                            method="GET", route=boundary_route.path, record_id=account_b_record_id
-                        )}],
+                        [
+                            {
+                                "role": "user",
+                                "content": _hypothesis_prompt(
+                                    method="GET",
+                                    route=boundary_route.path,
+                                    submission_id=submission_id,
+                                ),
+                            }
+                        ],
                         response_format=_STRUCTURED_OUTPUT,
                     ),
                     HypothesisWording,
@@ -367,7 +371,7 @@ def run_identity(
                 assert isinstance(wording, HypothesisWording)
                 hypothesis_id = hypothesis_submitter(
                     run_id,
-                    f"GET {boundary_route.path} must enforce record ownership",
+                    _AUTHORIZATION_APP_RULE,
                     wording.concise_claim,
                     wording.expected_evidence,
                 )
@@ -381,15 +385,22 @@ def run_identity(
                     logical_role="identity",
                     headline="Unverified authorization hypothesis created",
                     explanation=(
-                        "A hypothesis was recorded only after the bounded Account A request "
-                        "returned the exact Account B-owned record."
+                        "The hypothesis was recorded only after Student A received the "
+                        "exact Student B-owned submission detail."
                     ),
                     metadata={"hypothesis_id": hypothesis_id},
                     reference=f"ledger://hypothesis/{hypothesis_id}",
                 )
-
+        if len(tests) > _MAX_ENDPOINT_CALLS:
+            raise IdentityError("Identity endpoint-call cap exceeded")
         run_recorder(run_id=run_id, started_at=started_at, status="completed", app_version=app_version)
-        return IdentityRunResult(run_id, tests, hypothesis_ids, hypothesis_claims, False)
+        return IdentityRunResult(
+            run_id,
+            tests,
+            hypothesis_ids,
+            hypothesis_claims,
+            False,
+        )
     except Exception:
         run_recorder(run_id=run_id, started_at=started_at, status="failed", app_version=app_version)
         raise

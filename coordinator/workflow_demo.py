@@ -32,7 +32,7 @@ class ClientFactory(Protocol):
 @dataclass(frozen=True)
 class WorkflowDemoDependencies:
     health_check: Callable[[], dict[str, object]] = lambda: call_app_endpoint(
-        "GET", "/health", "token-account-a-fixed"
+        "GET", "/health", "token-teacher-fixed"
     )
     client_factory: ClientFactory = get_client
     mapper: Callable[..., AppContract] = run_mapper

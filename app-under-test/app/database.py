@@ -1,4 +1,4 @@
-"""SQLite helpers for the disposable demo notes app."""
+"""SQLite helpers for Crack's disposable synthetic school portal."""
 
 import os
 import sqlite3
@@ -21,26 +21,38 @@ def initialize_database() -> None:
     with connect() as connection:
         connection.executescript(
             """
-            CREATE TABLE IF NOT EXISTS accounts (
+            CREATE TABLE IF NOT EXISTS people (
                 id TEXT PRIMARY KEY,
-                username TEXT NOT NULL UNIQUE,
-                password TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('teacher', 'student')),
                 token TEXT NOT NULL UNIQUE,
                 display_name TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS records (
+            CREATE TABLE IF NOT EXISTS classes (
                 id TEXT PRIMARY KEY,
-                owner_account_id TEXT NOT NULL REFERENCES accounts(id),
-                title TEXT NOT NULL,
+                teacher_id TEXT NOT NULL REFERENCES people(id),
+                title TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS assignments (
+                id TEXT PRIMARY KEY,
+                class_id TEXT NOT NULL REFERENCES classes(id),
+                title TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS submissions (
+                id TEXT PRIMARY KEY,
+                assignment_id TEXT NOT NULL REFERENCES assignments(id),
+                student_id TEXT NOT NULL REFERENCES people(id),
                 body TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS work_items (
+            CREATE TABLE IF NOT EXISTS grades (
                 id TEXT PRIMARY KEY,
-                owner_account_id TEXT NOT NULL REFERENCES accounts(id),
-                title TEXT NOT NULL,
-                state TEXT NOT NULL CHECK (state IN ('draft', 'approved', 'published'))
+                submission_id TEXT NOT NULL UNIQUE REFERENCES submissions(id),
+                teacher_id TEXT NOT NULL REFERENCES people(id),
+                feedback TEXT NOT NULL,
+                state TEXT NOT NULL CHECK (state IN ('draft', 'reviewed', 'published'))
             );
             """
         )

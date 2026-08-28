@@ -58,10 +58,11 @@ class VerificationAttempt:
 @dataclass(frozen=True)
 class VerificationOverview:
     hypothesis_id: str
-    record_id: str
+    target_id: str
     retrieval_status_code: int
     shared_logical_state_hash: str
     attempts: tuple[VerificationAttempt, ...]
+    is_school_portal: bool
 
 
 def safe_text(value: object) -> str:
@@ -111,7 +112,8 @@ def _parse_reproduction_attempts(raw: str, finding_id: str) -> tuple[Reproductio
         for step in attempt["steps"]:
             if not isinstance(step, dict):
                 raise ReportIntegrityError(f"finding {finding_id} reproduction JSON has an invalid step")
-            values = {key: _required_text(step.get(key), finding_id, key) for key in ("method", "proposed_path", "resolved_path", "account")}
+            values = {key: _required_text(step.get(key), finding_id, key) for key in ("method", "proposed_path", "resolved_path")}
+            actor = _required_text(step.get("role", step.get("account")), finding_id, "role")
             executed, status_code = step.get("executed"), step.get("status_code")
             if not isinstance(executed, bool):
                 raise ReportIntegrityError(f"finding {finding_id} reproduction JSON has an invalid executed value")
@@ -122,7 +124,7 @@ def _parse_reproduction_attempts(raw: str, finding_id: str) -> tuple[Reproductio
             rendered_steps.append(ReproductionStep(
                 verifier_role=role, snapshot_id=snapshot,
                 method=values["method"], proposed_path=values["proposed_path"], resolved_path=values["resolved_path"],
-                account=values["account"], executed=executed, status_code=status_code,
+                account=actor, executed=executed, status_code=status_code,
             ))
         rendered.append(ReproductionAttempt(role, snapshot, tuple(rendered_steps)))
     return tuple(rendered)
@@ -218,8 +220,9 @@ def _verification_overview(view: RunView, hypothesis: Hypothesis, finding: Findi
     check_payloads = _event_payload(view, "verifier_deterministic_check")
     verdict_payloads = _event_payload(view, "verifier_final_verdict")
     rendered_attempts: list[VerificationAttempt] = []
-    retrieved_record_ids: set[str] = set()
+    retrieved_target_ids: set[str] = set()
     retrieval_status_codes: set[int] = set()
+    school_portal = False
 
     for attempt in attempts:
         matching_resets = [
@@ -252,7 +255,7 @@ def _verification_overview(view: RunView, hypothesis: Hypothesis, finding: Findi
         for step, (event, payload) in zip(attempt.steps, role_calls, strict=True):
             response = payload.get("response")
             if not isinstance(response, dict) or (
-                payload.get("account"), payload.get("executed"), payload.get("method"),
+                payload.get("role", payload.get("account")), payload.get("executed"), payload.get("method"),
                 payload.get("proposed_path"), payload.get("resolved_path"), response.get("status_code"),
             ) != (
                 step.account, step.executed, step.method, step.proposed_path,
@@ -260,20 +263,41 @@ def _verification_overview(view: RunView, hypothesis: Hypothesis, finding: Findi
             ) or event.policy_decision != "allowed":
                 raise ReportIntegrityError(f"finding {finding.id} call evidence does not match its reproduction steps")
 
-        discovery_indexes = [
-            index for index, step in enumerate(attempt.steps)
-            if step.account == "account_b" and step.method == "GET"
-            and step.resolved_path == "/records/mine" and 200 <= step.status_code < 300
-        ]
-        retrievals = [
-            (index, step) for index, step in enumerate(attempt.steps)
-            if step.account == "account_a" and step.method == "GET"
-            and step.resolved_path.startswith("/records/") and step.resolved_path != "/records/mine"
-            and 200 <= step.status_code < 300
-        ]
+        is_school_attempt = any(step.account in {"student_a", "student_b"} for step in attempt.steps)
+        if is_school_attempt:
+            school_portal = True
+            discovery_indexes = [
+                index for index, step in enumerate(attempt.steps)
+                if step.account == "student_b" and step.method == "GET"
+                and step.resolved_path == "/submissions/mine" and 200 <= step.status_code < 300
+            ]
+            retrievals = [
+                (index, step) for index, step in enumerate(attempt.steps)
+                if step.account == "student_a" and step.method == "GET"
+                and re.fullmatch(r"/submissions/[A-Za-z0-9_-]{1,100}/grade", step.resolved_path)
+                and 200 <= step.status_code < 300
+            ]
+        else:
+            discovery_indexes = [
+                index for index, step in enumerate(attempt.steps)
+                if step.account == "account_b" and step.method == "GET"
+                and step.resolved_path == "/records/mine" and 200 <= step.status_code < 300
+            ]
+            retrievals = [
+                (index, step) for index, step in enumerate(attempt.steps)
+                if step.account == "account_a" and step.method == "GET"
+                and step.resolved_path.startswith("/records/") and step.resolved_path != "/records/mine"
+                and 200 <= step.status_code < 300
+            ]
         if not discovery_indexes or not retrievals or retrievals[-1][0] <= discovery_indexes[0]:
-            raise ReportIntegrityError(f"finding {finding.id} does not record Account B discovery followed by Account A retrieval")
-        retrieved_record_ids.add(retrievals[-1][1].resolved_path.removeprefix("/records/"))
+            raise ReportIntegrityError(f"finding {finding.id} does not record bounded discovery followed by exact detail retrieval")
+        resolved_target = retrievals[-1][1].resolved_path
+        target_id = (
+            resolved_target.removeprefix("/submissions/").removesuffix("/grade")
+            if is_school_attempt
+            else resolved_target.removeprefix("/records/")
+        )
+        retrieved_target_ids.add(target_id)
         retrieval_status_codes.add(retrievals[-1][1].status_code)
 
         matching_checks = [
@@ -292,8 +316,8 @@ def _verification_overview(view: RunView, hypothesis: Hypothesis, finding: Findi
             check_reason=reason,
         ))
 
-    if len(retrieved_record_ids) != 1:
-        raise ReportIntegrityError(f"finding {finding.id} verifier attempts did not retrieve the same record")
+    if len(retrieved_target_ids) != 1:
+        raise ReportIntegrityError(f"finding {finding.id} verifier attempts did not retrieve the same exact target")
     if len(retrieval_status_codes) != 1:
         raise ReportIntegrityError(f"finding {finding.id} verifier attempts did not record the same retrieval status")
     rule = safe_text(hypothesis.affected_app_rule).lower()
@@ -311,17 +335,18 @@ def _verification_overview(view: RunView, hypothesis: Hypothesis, finding: Findi
         raise ReportIntegrityError(f"finding {finding.id} lacks a matching verified final verdict")
     return VerificationOverview(
         hypothesis_id=hypothesis.id,
-        record_id=next(iter(retrieved_record_ids)),
+        target_id=next(iter(retrieved_target_ids)),
         retrieval_status_code=next(iter(retrieval_status_codes)),
         shared_logical_state_hash=next(iter(hashes)),
         attempts=tuple(rendered_attempts),
+        is_school_portal=school_portal,
     )
 
 
 def _markdown_step(step: ReproductionStep) -> str:
     values = [
         ("Verifier role", step.verifier_role), ("Snapshot/reset ID", step.snapshot_id), ("Method", step.method),
-        ("Proposed path", step.proposed_path), ("Resolved local path", step.resolved_path), ("Synthetic account", step.account),
+        ("Proposed path", step.proposed_path), ("Resolved local path", step.resolved_path), ("Synthetic role", step.account),
         ("Executed", step.executed), ("Recorded status code", step.status_code),
     ]
     return "; ".join(f"{label}: {markdown_text(value)}" for label, value in values if value)
@@ -338,7 +363,7 @@ def render_markdown(view: RunView) -> str:
         f"- Environment snapshot/reset identifier: {markdown_text(run.environment_snapshot_id)}", f"- Run start: {markdown_text(run.start_time)}",
         f"- Run end: {markdown_text(run.end_time)}", f"- Verifier run status: {markdown_text(run.status)}", "",
         "This report concerns a synthetic-data, disposable local environment only.", "",
-        "- Local seeded demo application only", "- Synthetic accounts and data only", "- No public-network or production testing",
+        "- Local seeded demo application only", "- Synthetic identities and data only", "- No public-network or production testing",
         "- No claim of complete security coverage", "- No compliance or certification claim",
         "- Results apply only to the recorded application version, scope, and snapshots", "",
         "## Result summary", "", f"- Verified findings: {verified}", f"- Unverified hypotheses: {unverified}",
@@ -663,16 +688,33 @@ def render_html(view: RunView) -> str:
         if finding is None:
             continue
         overview = overviews[hypothesis.id]
-        stories.append(f'''<ol class="story-flow">
+        if overview.is_school_portal:
+            story = f'''<ol class="story-flow">
+<li><strong>Student B discovers their own submission</strong>The allowed <code>GET /submissions/mine</code> flow returns only Student B's submission.</li>
+<li><strong>The exact submission ID is captured</strong><code>{html_text(overview.target_id)}</code> becomes the one submission both checks follow.</li>
+<li><strong>Student A requests that submission detail</strong>The authenticated Student A flow requests the captured Student B submission and grade detail.</li>
+<li><strong>Student A receives the same detail</strong>HTTP {html_text(overview.retrieval_status_code)} returns the exact Student B-owned submission and grade detail.</li>
+</ol>'''
+            finding_title = "Student A could read a submission and grade owned by Student B"
+            impact = "The recorded rule requires student ownership enforcement, but the reproduction shows one authenticated student receiving another student's private submission and grade detail."
+            shared_data = "Both fresh environments contained equivalent seeded Teacher, student, class, assignment, submission, and grade data."
+            result_kind = "cross-student result"
+        else:
+            story = f'''<ol class="story-flow">
 <li><strong>Account B discovers its own record</strong>The allowed <code>GET /records/mine</code> flow returns Account B's record.</li>
-<li><strong>The exact record ID is captured</strong><code>{html_text(overview.record_id)}</code> becomes the one record both checks follow.</li>
+<li><strong>The exact record ID is captured</strong><code>{html_text(overview.target_id)}</code> becomes the one record both checks follow.</li>
 <li><strong>Account A requests that record</strong>The authenticated Account A flow requests the captured Account B record.</li>
 <li><strong>Account A receives the same record</strong>HTTP {html_text(overview.retrieval_status_code)} returns the exact Account B-owned record.</li>
-</ol>''')
+</ol>'''
+            finding_title = "Account A could read a record owned by Account B"
+            impact = "The recorded rule requires ownership enforcement, but the reproduction shows one authenticated account receiving another account's data."
+            shared_data = "Both fresh environments contained equivalent seeded accounts and records."
+            result_kind = "cross-account result"
+        stories.append(story)
         references = "".join(f"<li>{html_text(reference)}</li>" for reference in _parse_evidence_references(finding.evidence_references, finding.id))
         finding_html.append(f'''<article class="finding-card">
-<h3>Account A could read a record owned by Account B</h3>
-<div class="problem-fix-grid"><div class="problem-block"><h4>Why this is a real problem</h4><p>The recorded rule requires ownership enforcement, but the reproduction shows one authenticated account receiving another account's data.</p><p class="recorded-impact">Recorded impact: {html_text(finding.severity_rationale)}</p></div><div class="fix-block"><h4>How to fix it</h4><p>{html_text(finding.remediation_direction)}</p></div></div>
+<h3>{html_text(finding_title)}</h3>
+<div class="problem-fix-grid"><div class="problem-block"><h4>Why this is a real problem</h4><p>{html_text(impact)}</p><p class="recorded-impact">Recorded impact: {html_text(finding.severity_rationale)}</p></div><div class="fix-block"><h4>How to fix it</h4><p>{html_text(finding.remediation_direction)}</p></div></div>
 <details class="technical-details"><summary>Technical finding details and evidence references</summary><div class="details-body">{_html_definition([('Finding ID', finding.id), ('Hypothesis ID', hypothesis.id), ('Recorded claim', hypothesis.concise_claim), ('Intended rule', hypothesis.affected_app_rule), ('Expected evidence', hypothesis.expected_evidence), ('Recorded impact', finding.severity_rationale)])}<h4>Evidence references</h4><ul class="mono">{references}</ul></div></details>
 </article>''')
         attempt_cards: list[str] = []
@@ -689,10 +731,10 @@ def render_html(view: RunView) -> str:
                 f'''<tr class="reproduction-call"><td class="{html_text(step.account.replace('_', '-'))}">{html_text(step.account.replace('_', ' ').title())}</td><td>{html_text(step.method)}</td><td>{html_text(step.proposed_path)}</td><td>{html_text(step.resolved_path)}</td><td>{html_text(step.status_code)}</td><td>Executed</td></tr>'''
                 for step in attempt.steps
             )
-            attempt_tables.append(f'''<div class="reproduction-group"><h3>Independent check {attempt_number}</h3><span class="technical-label">{html_text(role_label)}</span><div class="table-scroll" tabindex="0" role="region" aria-label="Independent check {attempt_number} reproduction calls"><table><thead><tr><th>Synthetic account</th><th>Method</th><th>Proposed path</th><th>Resolved local path</th><th>Status</th><th>Execution</th></tr></thead><tbody>{step_rows}</tbody></table></div></div>''')
+            attempt_tables.append(f'''<div class="reproduction-group"><h3>Independent check {attempt_number}</h3><span class="technical-label">{html_text(role_label)}</span><div class="table-scroll" tabindex="0" role="region" aria-label="Independent check {attempt_number} reproduction calls"><table><thead><tr><th>Synthetic role</th><th>Method</th><th>Proposed path</th><th>Resolved local path</th><th>Status</th><th>Execution</th></tr></thead><tbody>{step_rows}</tbody></table></div></div>''')
         attempts_html.append(f'''<div class="attempt-grid">{"".join(attempt_cards)}</div>
-<div class="same-data"><strong>Same starting data</strong><p>Both fresh environments contained equivalent seeded accounts and records.</p><details><summary>Technical value · Shared state hash</summary><div class="details-body"><code>{html_text(overview.shared_logical_state_hash)}</code></div></details></div>
-<aside class="trust-explanation"><h3>Why two checks matter</h3><ul><li>They ran sequentially from separate fresh resets.</li><li>The shared state hash confirms equivalent seeded starting data.</li><li>Each check independently reproduced the same cross-account result.</li><li>The verifier design keeps plans and results isolated; neither check receives the other's plan or result.</li><li>The same ordinary-code evidence rule evaluated both results.</li></ul><p class="proof-note"><strong>Final decision made by ordinary code.</strong> The model-planned steps do not assign the verdict.</p></aside>''')
+<div class="same-data"><strong>Same starting data</strong><p>{html_text(shared_data)}</p><details><summary>Technical value · Shared state hash</summary><div class="details-body"><code>{html_text(overview.shared_logical_state_hash)}</code></div></details></div>
+<aside class="trust-explanation"><h3>Why two checks matter</h3><ul><li>They ran sequentially from separate fresh resets.</li><li>The shared state hash confirms equivalent seeded starting data.</li><li>Each check independently reproduced the same {html_text(result_kind)}.</li><li>The verifier design keeps plans and results isolated; neither check receives the other's plan or result.</li><li>The same ordinary-code evidence rule evaluated both results.</li></ul><p class="proof-note"><strong>Final decision made by ordinary code.</strong> The model-planned steps do not assign the verdict.</p></aside>''')
         reproduction_html.extend(attempt_tables)
 
     other_items = [hypothesis for hypothesis in hypotheses if hypothesis.verification_status != "verified"]
@@ -718,7 +760,17 @@ def render_html(view: RunView) -> str:
     else:
         primary_finding = findings[primary_hypothesis.id]
         primary_overview = overviews[primary_hypothesis.id]
-        hero = f'''<div class="outcome-hero"><div class="outcome-grid"><div><p class="section-kicker">Recorded authorization failure</p><p id="verification-state" class="status-line">Evidence-backed finding</p><h1 id="outcome-heading" class="outcome-title">Account A could read Account B's record.</h1><p class="tested-rule"><strong>What the system tested:</strong> whether {html_text(primary_hypothesis.affected_app_rule)}.</p></div><div class="comparison" aria-labelledby="comparison-heading"><h2 id="comparison-heading">Expected vs actual</h2><div class="comparison-card expected"><strong>Expected</strong><p>Account A must not be able to retrieve Account B's record.</p></div><div class="comparison-card actual"><strong>Actual</strong><p>Account A received Account B's exact record with HTTP {html_text(primary_overview.retrieval_status_code)}.</p></div></div></div><div class="answer-grid"><div class="answer-card"><h2>How was it proven?</h2><p>Two sequential checks reproduced the same cross-account read.</p></div><div class="answer-card"><h2>Why trust the result?</h2><p>Fresh resets, equivalent seeded data, and one ordinary-code rule.</p></div><div class="answer-card fix"><h2>What should the developer fix?</h2><p>{html_text(primary_finding.remediation_direction)}</p></div></div></div>'''
+        if primary_overview.is_school_portal:
+            outcome = "Student A could read Student B's submission and grade detail."
+            expected = "Student A must not be able to retrieve Student B's private submission and grade detail."
+            actual = f"Student A received Student B's exact submission and grade detail with HTTP {html_text(primary_overview.retrieval_status_code)}."
+            proof = "Two sequential checks reproduced the same cross-student detail read."
+        else:
+            outcome = "Account A could read Account B's record."
+            expected = "Account A must not be able to retrieve Account B's record."
+            actual = f"Account A received Account B's exact record with HTTP {html_text(primary_overview.retrieval_status_code)}."
+            proof = "Two sequential checks reproduced the same cross-account read."
+        hero = f'''<div class="outcome-hero"><div class="outcome-grid"><div><p class="section-kicker">Recorded authorization failure</p><p id="verification-state" class="status-line">Evidence-backed finding</p><h1 id="outcome-heading" class="outcome-title">{outcome}</h1><p class="tested-rule"><strong>What the system tested:</strong> whether {html_text(primary_hypothesis.affected_app_rule)}.</p></div><div class="comparison" aria-labelledby="comparison-heading"><h2 id="comparison-heading">Expected vs actual</h2><div class="comparison-card expected"><strong>Expected</strong><p>{expected}</p></div><div class="comparison-card actual"><strong>Actual</strong><p>{actual}</p></div></div></div><div class="answer-grid"><div class="answer-card"><h2>How was it proven?</h2><p>{proof}</p></div><div class="answer-card"><h2>Why trust the result?</h2><p>Fresh resets, equivalent seeded data, and one ordinary-code rule.</p></div><div class="answer-card fix"><h2>What should the developer fix?</h2><p>{html_text(primary_finding.remediation_direction)}</p></div></div></div>'''
     return f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Crack · Contained Verification Report</title><style>{_HTML_STYLES}</style></head>
 <body><div class="shell">
@@ -730,7 +782,7 @@ def render_html(view: RunView) -> str:
 <section aria-labelledby="verification-heading"><div class="section-heading"><p class="section-kicker">Two sequential checks</p><h2 id="verification-heading">Why the evidence is trustworthy</h2><p>The checks are isolated attempts run one after the other through logical verifier roles; they are not parallel services or spawned background processes.</p></div>{attempts_section}</section>
 <section aria-labelledby="reproduction-heading"><div class="section-heading"><p class="section-kicker">Normal application flow</p><h2 id="reproduction-heading">Safe reproduction steps</h2><p>Calls are presented in their recorded order. Dense paths stay inside bounded, horizontally scrollable tables.</p></div>{reproduction_section}</section>
 <section aria-labelledby="terms-heading"><div class="section-heading"><p class="section-kicker">Plain-language reference</p><h2 id="terms-heading">Technical terms explained</h2><p>These definitions describe how this local project works.</p></div><dl class="glossary-grid"><div><dt>Verifier</dt><dd>A logical checking role activated by the coordinator to propose one bounded reproduction plan. It is not a separate service or background process.</dd></div><div><dt>Fresh reset</dt><dd>The disposable demo app is returned to its known seeded starting data before one check begins.</dd></div><div><dt>Shared state hash</dt><dd>A fingerprint of the ordered seeded data showing that two fresh environments started equivalently. It is not a confidence score.</dd></div><div><dt>Deterministic / code-owned check</dt><dd>An ordinary Python rule evaluates the recorded responses the same way for both checks; model wording cannot assign the verdict.</dd></div><div><dt>Verified finding</dt><dd>A hypothesis that both sequential checks reproduced and that has a corresponding recorded finding.</dd></div></dl></section>
-<section aria-labelledby="scope-heading"><div class="section-heading"><p class="section-kicker">Containment boundary</p><h2 id="scope-heading">Scope and limitations</h2></div><div class="scope-grid"><div>{_html_definition([('Target/application version', run.app_version), ('Declared scope', run.declared_scope), ('Run status', run.status)])}</div><ul class="limitations"><li>Local seeded demo application only</li><li>Synthetic accounts and data only</li><li>No public-network or production testing</li><li>No claim of complete security coverage</li><li>No compliance or certification claim</li><li>Results apply only to the recorded application version, scope, and snapshots</li></ul></div></section>
+<section aria-labelledby="scope-heading"><div class="section-heading"><p class="section-kicker">Containment boundary</p><h2 id="scope-heading">Scope and limitations</h2></div><div class="scope-grid"><div>{_html_definition([('Target/application version', run.app_version), ('Declared scope', run.declared_scope), ('Run status', run.status)])}</div><ul class="limitations"><li>Local seeded demo application only</li><li>Synthetic identities and data only</li><li>No public-network or production testing</li><li>No claim of complete security coverage</li><li>No compliance or certification claim</li><li>Results apply only to the recorded application version, scope, and snapshots</li></ul></div></section>
 <section aria-labelledby="timeline-heading"><div class="section-heading"><p class="section-kicker">Complete recorded trail</p><h2 id="timeline-heading">Technical evidence timeline</h2><p>The complete ordered ledger event stream remains available for technical review.</p></div><details><summary>Open complete evidence timeline · {len(view.events)} events</summary><div class="details-body"><div class="table-scroll" tabindex="0" role="region" aria-label="Complete technical evidence timeline"><table><thead><tr><th>Sequence</th><th>Action type</th><th>Safe request/response summary</th><th>Artifact reference</th><th>Policy decision</th><th>Timestamp</th></tr></thead><tbody>{events}</tbody></table></div></div></details></section>
 <section aria-labelledby="integrity-heading"><div class="section-heading"><p class="section-kicker">Provenance</p><h2 id="integrity-heading">Report integrity and run metadata</h2></div><div class="integrity-card">{_html_definition([('Verifier run ID', run.id), ('Environment snapshot/reset identifiers', run.environment_snapshot_id), ('Run start', run.start_time), ('Run end', run.end_time), ('Verified findings', verified), ('Unverified hypotheses', unverified), ('Inconclusive hypotheses', inconclusive), ('Failed or other statuses', other), ('Token budget', run.token_budget), ('Time budget', run.time_budget), ('Run status', run.status)])}<p class="integrity-note">This standalone document contains static CSS only. It loads no network resources and executes no JavaScript.</p></div></section>
 </main></div></body></html>

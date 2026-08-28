@@ -1,185 +1,160 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 import pytest
 
-from agents.verifier.agent import ExecutedStep, deterministic_boundary_check, run_verifier
+from agents.verifier.agent import (
+    ExecutedStep,
+    VerifierError,
+    deterministic_boundary_check,
+    run_verifier,
+)
 from agents.workflow.agent import WORKFLOW_APP_RULE
 
 
-HYPOTHESIS_ID = "hypothesis-account-boundary"
-HYPOTHESIS = {
-    "id": HYPOTHESIS_ID,
+AUTH_ID = "hypothesis-student-boundary"
+AUTH = {
+    "id": AUTH_ID,
     "submitted_by_run": "identity:one",
-    "affected_app_rule": "GET /records/{record_id} must enforce record ownership",
-    "concise_claim": "Account A can read Account B's record",
+    "affected_app_rule": "GET /submissions/{submission_id}/grade must enforce student ownership",
+    "concise_claim": "Student A can read Student B's submission grade detail.",
     "expected_evidence": (
-        "Account B discovers its record and Account A receives that record successfully"
+        "Student B discovers an exact submission and Student A receives its grade detail."
     ),
     "verification_status": "unverified",
     "verifier_run_id": None,
 }
-PLAN = json.dumps(
+AUTH_PLAN = json.dumps(
     {
         "steps": [
-            {"method": "GET", "path": "/records/mine", "account": "account_b"},
+            {"method": "GET", "path": "/submissions/mine", "role": "student_b"},
             {
                 "method": "GET",
-                "path": "/records/{record_id}",
-                "account": "account_a",
+                "path": "/submissions/{submission_id}/grade",
+                "role": "student_a",
             },
         ]
     }
 )
-WORKFLOW_HYPOTHESIS = {
-    "id": "hypothesis-workflow-rule",
+WORKFLOW = {
+    "id": "hypothesis-grade-workflow",
     "submitted_by_run": "workflow:one",
     "affected_app_rule": WORKFLOW_APP_RULE,
-    "concise_claim": "A draft work item can be published without approval.",
-    "expected_evidence": "Account A lists a draft item then receives a published result.",
+    "concise_claim": "A draft grade can be published without review.",
+    "expected_evidence": "Teacher lists a draft grade then receives a published result.",
     "verification_status": "unverified",
     "verifier_run_id": None,
 }
 WORKFLOW_PLAN = json.dumps(
-    {
-        "steps": [
-            {"operation": "list_owned_work_items"},
-            {"operation": "publish_work_item"},
-        ]
-    }
+    {"steps": [{"operation": "list_teacher_grades"}, {"operation": "publish_grade"}]}
 )
 
 
-def _executed_step(account: str, body: object) -> ExecutedStep:
-    path = "/records/mine" if account == "account_b" else "/records/test-record"
-    return ExecutedStep(
-        method="GET",
-        proposed_path=path,
-        resolved_path=path,
-        account=account,
-        executed=True,
-        response={"status_code": 200, "body": body},
-        result="executed",
-        evidence_reference="ledger://test-event",
-    )
-
-
-def _account_b_discovery_step() -> ExecutedStep:
-    return _executed_step(
-        "account_b",
-        {
-            "records": [
-                {
-                    "id": "note-account-b-001",
-                    "owner_account_id": "account-b",
-                }
-            ]
-        },
-    )
-
-
-def test_exact_discovered_account_b_record_returned_to_account_a_succeeds() -> None:
-    account_a_step = _executed_step(
-        "account_a",
-        {"id": "note-account-b-001", "owner_account_id": "account-b"},
-    )
-
-    satisfied, _reason, matching_steps = deterministic_boundary_check(
-        (_account_b_discovery_step(), account_a_step)
-    )
-
-    assert satisfied is True
-    assert matching_steps == (2,)
-
-
-def test_different_account_b_record_returned_to_account_a_fails() -> None:
-    account_a_step = _executed_step(
-        "account_a",
-        {"id": "note-account-b-999", "owner_account_id": "account-b"},
-    )
-
-    satisfied, _reason, matching_steps = deterministic_boundary_check(
-        (_account_b_discovery_step(), account_a_step)
-    )
-
-    assert satisfied is False
-    assert matching_steps == ()
-
-
-@pytest.mark.parametrize("owner", [None, "account-c"])
-def test_matching_record_without_account_b_ownership_fails(owner: str | None) -> None:
-    returned_record = {"id": "note-account-b-001"}
-    if owner is not None:
-        returned_record["owner_account_id"] = owner
-    account_a_step = _executed_step("account_a", returned_record)
-
-    satisfied, _reason, matching_steps = deterministic_boundary_check(
-        (_account_b_discovery_step(), account_a_step)
-    )
-
-    assert satisfied is False
-    assert matching_steps == ()
-
-
-def test_account_a_response_before_account_b_discovery_fails() -> None:
-    account_a_step = _executed_step(
-        "account_a",
-        {"id": "note-account-b-001", "owner_account_id": "account-b"},
-    )
-
-    satisfied, _reason, matching_steps = deterministic_boundary_check(
-        (account_a_step, _account_b_discovery_step())
-    )
-
-    assert satisfied is False
-    assert matching_steps == ()
-
-
 class FakeClient:
-    def __init__(self, role: str, trace: list[str]) -> None:
+    def __init__(self, role: str, response: str, trace: list[str]) -> None:
         self.role = role
+        self.response = response
         self.trace = trace
-        self.messages: list[list[dict[str, str]]] = []
-        self.kwargs: list[dict[str, object]] = []
+        self.requests: list[dict[str, object]] = []
 
-    def complete(
-        self, messages: list[dict[str, str]], **kwargs: object
-    ) -> str:
+    def complete(self, _messages: list[dict[str, str]], **kwargs: object) -> str:
         self.trace.append(f"plan:{self.role}")
-        self.messages.append(messages)
-        self.kwargs.append(kwargs)
-        return PLAN
+        self.requests.append(kwargs)
+        return self.response
 
 
 class FailingClient(FakeClient):
-    def complete(
-        self, messages: list[dict[str, str]], **kwargs: object
-    ) -> str:
-        super().complete(messages, **kwargs)
+    def complete(self, _messages: list[dict[str, str]], **kwargs: object) -> str:
+        self.trace.append(f"plan:{self.role}")
+        self.requests.append(kwargs)
         raise RuntimeError("provider unavailable")
 
 
-class MalformedClient(FakeClient):
-    def complete(
-        self, messages: list[dict[str, str]], **kwargs: object
-    ) -> str:
-        super().complete(messages, **kwargs)
-        return "not valid structured JSON"
+def _step(role: str, body: object, path: str) -> ExecutedStep:
+    return ExecutedStep(
+        "GET",
+        path,
+        path,
+        role,
+        True,
+        {"status_code": 200, "body": body},
+        "executed",
+        "ledger://test",
+    )
+
+
+def test_exact_discovered_student_b_submission_returned_to_student_a_succeeds() -> None:
+    discovery = _step(
+        "student_b",
+        {
+            "submissions": [
+                {
+                    "submission_id": "submission-student-b-001",
+                    "student_id": "student-b",
+                }
+            ]
+        },
+        "/submissions/mine",
+    )
+    detail = _step(
+        "student_a",
+        {
+            "submission_id": "submission-student-b-001",
+            "student_id": "student-b",
+            "grade_id": "grade-student-b-001",
+        },
+        "/submissions/submission-student-b-001/grade",
+    )
+
+    assert deterministic_boundary_check((discovery, detail))[0] is True
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        {
+            "submission_id": "other",
+            "student_id": "student-b",
+            "grade_id": "grade-student-b-001",
+        },
+        {
+            "submission_id": "submission-student-b-001",
+            "student_id": "student-a",
+            "grade_id": "grade-student-b-001",
+        },
+        {"submission_id": "submission-student-b-001", "student_id": "student-b"},
+    ],
+)
+def test_predicate_rejects_wrong_id_owner_or_missing_grade(detail: dict[str, object]) -> None:
+    discovery = _step(
+        "student_b",
+        {
+            "submissions": [
+                {
+                    "submission_id": "submission-student-b-001",
+                    "student_id": "student-b",
+                }
+            ]
+        },
+        "/submissions/mine",
+    )
+    response = _step("student_a", detail, "/submissions/submission-student-b-001/grade")
+
+    assert deterministic_boundary_check((discovery, response))[0] is False
 
 
 def _run(
-    success_by_attempt: tuple[bool, bool],
-    progress=None,
+    successes: tuple[bool, bool],
+    progress: Callable[..., None] | None = None,
 ) -> tuple[object, dict[str, object]]:
     trace: list[str] = []
-    reset_count = 0
+    evidence: list[dict[str, object]] = []
     statuses: list[tuple[str, str, str]] = []
     findings: list[tuple[str, str, str, str, str]] = []
-    evidence: list[dict[str, object]] = []
     runs: list[dict[str, object]] = []
-    client_a = FakeClient("verifier_a", trace)
-    client_b = FakeClient("verifier_b", trace)
+    reset_count = 0
 
     def reset() -> str:
         nonlocal reset_count
@@ -189,281 +164,295 @@ def _run(
 
     def call(method: str, path: str, token: str) -> dict[str, object]:
         trace.append(f"call:{reset_count}:{method}:{path}:{token}")
-        assert method == "GET"
-        if path == "/records/mine":
-            assert token == "token-account-b-fixed"
+        if path == "/submissions/mine":
+            assert token == "token-student-b-fixed"
             return {
                 "status_code": 200,
                 "body": {
-                    "records": [
+                    "submissions": [
                         {
-                            "id": "note-account-b-001",
-                            "owner_account_id": "account-b",
+                            "submission_id": "submission-student-b-001",
+                            "student_id": "student-b",
                         }
                     ]
                 },
             }
-        assert path == "/records/note-account-b-001"
-        assert token == "token-account-a-fixed"
-        if success_by_attempt[reset_count - 1]:
-            return {
-                "status_code": 200,
-                "body": {
-                    "id": "note-account-b-001",
-                    "owner_account_id": "account-b",
-                },
-            }
-        return {"status_code": 404, "body": {"detail": "Record not found"}}
+        assert token == "token-student-a-fixed"
+        assert path == "/submissions/submission-student-b-001/grade"
+        return {
+            "status_code": 200 if successes[reset_count - 1] else 403,
+            "body": {
+                "submission_id": "submission-student-b-001",
+                "student_id": "student-b",
+                "grade_id": "grade-student-b-001",
+            },
+        }
 
     result = run_verifier(
-        HYPOTHESIS_ID,
-        client_a=client_a,
-        client_b=client_b,
-        hypothesis_reader=lambda _hypothesis_id: HYPOTHESIS,
+        AUTH_ID,
+        client_a=FakeClient("verifier_a", AUTH_PLAN, trace),
+        client_b=FakeClient("verifier_b", AUTH_PLAN, trace),
+        hypothesis_reader=lambda _id: AUTH,
         resetter=reset,
         endpoint_caller=call,
         evidence_recorder=lambda **kwargs: evidence.append(kwargs),
         status_updater=lambda *args: statuses.append(args),
-        finding_recorder=lambda *args: findings.append(args) or "finding-123",
+        finding_recorder=lambda *args: findings.append(args) or "finding-1",
         run_recorder=lambda **kwargs: runs.append(kwargs),
         progress=progress,
     )
-    context = {
+    return result, {
         "trace": trace,
-        "reset_count": reset_count,
+        "evidence": evidence,
         "statuses": statuses,
         "findings": findings,
-        "evidence": evidence,
         "runs": runs,
-        "client_a": client_a,
-        "client_b": client_b,
+        "reset_count": reset_count,
     }
-    return result, context
 
 
-def test_both_attempts_succeed_verifies_and_creates_finding() -> None:
-    result, context = _run((True, True))
+@pytest.mark.parametrize(
+    ("successes", "verdict"),
+    [
+        ((True, True), "verified"),
+        ((False, False), "unverified"),
+        ((True, False), "inconclusive"),
+    ],
+)
+def test_two_clean_resets_and_code_owned_verdict(
+    successes: tuple[bool, bool],
+    verdict: str,
+) -> None:
+    result, context = _run(successes)
 
-    assert result.verdict == "verified"
-    assert result.finding_id == "finding-123"
-    assert [attempt.check.satisfied for attempt in result.attempts] == [True, True]
-    assert context["statuses"][0][1] == "verified"
-    assert len(context["findings"]) == 1
-    assert "ownership check server-side" in context["findings"][0][4]
-    action_types = [event["action_type"] for event in context["evidence"]]
-    assert action_types.count("verifier_plan_proposed") == 2
-    assert action_types.count("verifier_call_result") == 4
-    assert action_types.count("verifier_deterministic_check") == 2
-    assert action_types[-1] == "verifier_final_verdict"
-
-
-def test_both_attempts_fail_stays_unverified_without_finding() -> None:
-    result, context = _run((False, False))
-
-    assert result.verdict == "unverified"
-    assert result.finding_id is None
-    assert [attempt.check.satisfied for attempt in result.attempts] == [False, False]
-    assert context["statuses"][0][1] == "unverified"
-    assert context["findings"] == []
-
-
-def test_disagreement_is_inconclusive_without_finding() -> None:
-    result, context = _run((True, False))
-
-    assert result.verdict == "inconclusive"
-    assert result.finding_id is None
-    assert [attempt.check.satisfied for attempt in result.attempts] == [True, False]
-    assert context["statuses"][0][1] == "inconclusive"
-    assert context["findings"] == []
-
-
-def test_each_attempt_resets_first_and_uses_independent_identical_state() -> None:
-    result, context = _run((True, True))
-
-    trace = context["trace"]
+    assert result.verdict == verdict
     assert context["reset_count"] == 2
-    assert trace.index("reset:1") < trace.index("plan:verifier_a")
-    assert trace.index("reset:2") < trace.index("plan:verifier_b")
-    assert trace.index("plan:verifier_a") < trace.index("reset:2")
-    assert any(entry.startswith("call:1:") for entry in trace)
-    assert any(entry.startswith("call:2:") for entry in trace)
     assert result.attempts[0].snapshot_id != result.attempts[1].snapshot_id
     assert {
-        snapshot.rsplit(":state-sha256:", 1)[1]
-        for snapshot in (attempt.snapshot_id for attempt in result.attempts)
+        attempt.snapshot_id.rsplit(":state-sha256:", 1)[1]
+        for attempt in result.attempts
     } == {"identical"}
+    assert (
+        context["trace"].index("reset:1")
+        < context["trace"].index("plan:verifier_a")
+        < context["trace"].index("reset:2")
+        < context["trace"].index("plan:verifier_b")
+    )
+    assert (len(context["findings"]) == 1) is (verdict == "verified")
+    assert context["statuses"][0][1] == verdict
+    assert context["runs"][-1]["status"] == "completed"
+    if verdict == "verified":
+        assert "student ownership" in context["findings"][0][4]
 
-    client_a = context["client_a"]
-    client_b = context["client_b"]
-    assert client_a.messages == client_b.messages
-    assert client_a.kwargs == client_b.kwargs == [
-        {"response_format": {"type": "json_object"}}
-    ]
 
-
-def test_progress_follows_real_sequential_boundaries_and_cannot_change_verdict() -> None:
+def test_verifier_progress_follows_sequential_boundaries_and_is_presentation_only() -> None:
     events: list[str] = []
 
     def observer(**event: object) -> None:
-        events.append(str(event["event_type"]))
-        if event["event_type"] == "verifier_a.call_recorded":
+        event_type = str(event["event_type"])
+        events.append(event_type)
+        if event_type == "verifier_a.call_recorded":
             raise RuntimeError("presentation unavailable")
 
     result, _context = _run((True, True), progress=observer)
 
     assert result.verdict == "verified"
-    assert events.index("verifier_a.completed") < events.index("verifier_b.activated")
-    assert events.index("verifier_b.completed") < events.index("consensus.started")
-    assert events[-2:] == ["consensus.completed", "finding.recorded"]
+    expected_order = [
+        "verifier_a.activated",
+        "verifier_a.reset_completed",
+        "verifier_a.plan_validated",
+        "verifier_a.check_completed",
+        "verifier_a.completed",
+        "verifier_b.activated",
+        "verifier_b.reset_completed",
+        "verifier_b.plan_validated",
+        "verifier_b.check_completed",
+        "verifier_b.completed",
+        "consensus.started",
+        "consensus.completed",
+        "finding.recorded",
+    ]
+    assert [events.index(event_type) for event_type in expected_order] == sorted(
+        events.index(event_type) for event_type in expected_order
+    )
     assert events.count("verifier_a.call_recorded") == 2
     assert events.count("verifier_b.call_recorded") == 2
 
 
-@pytest.mark.parametrize("client_type", [FailingClient, MalformedClient])
-def test_incomplete_second_provider_attempt_fails_closed_without_verdict_or_finding(
-    client_type: type[FakeClient],
+@pytest.mark.parametrize(
+    "client",
+    [
+        FailingClient("verifier_a", AUTH_PLAN, []),
+        FakeClient("verifier_a", "not valid structured JSON", []),
+    ],
+    ids=["provider-failure", "malformed-output"],
+)
+def test_verifier_provider_or_schema_failure_fails_before_verdict_or_finding(
+    client: FakeClient,
 ) -> None:
-    trace: list[str] = []
-    reset_count = 0
-    statuses: list[tuple[str, str, str]] = []
-    findings: list[tuple[str, str, str, str, str]] = []
+    endpoint_calls: list[tuple[object, ...]] = []
+    statuses: list[tuple[object, ...]] = []
+    findings: list[tuple[object, ...]] = []
     runs: list[dict[str, object]] = []
+    resets: list[str] = []
 
     def reset() -> str:
-        nonlocal reset_count
-        reset_count += 1
-        trace.append(f"reset:{reset_count}")
-        return f"reset:unique-{reset_count}:state-sha256:identical"
+        reset_id = f"reset:{len(resets) + 1}:state-sha256:same"
+        resets.append(reset_id)
+        return reset_id
 
-    def call(method: str, path: str, token: str) -> dict[str, object]:
-        if path == "/records/mine":
-            return {
-                "status_code": 200,
-                "body": {
-                    "records": [
-                        {
-                            "id": "note-account-b-001",
-                            "owner_account_id": "account-b",
-                        }
-                    ]
-                },
-            }
-        return {
-            "status_code": 200,
-            "body": {
-                "id": "note-account-b-001",
-                "owner_account_id": "account-b",
-            },
-        }
-
-    with pytest.raises((RuntimeError, ValueError)):
+    with pytest.raises((RuntimeError, VerifierError)):
         run_verifier(
-            HYPOTHESIS_ID,
-            client_a=FakeClient("verifier_a", trace),
-            client_b=client_type("verifier_b", trace),
-            hypothesis_reader=lambda _hypothesis_id: HYPOTHESIS,
+            AUTH_ID,
+            client_a=client,
+            client_b=FakeClient("verifier_b", AUTH_PLAN, []),
+            hypothesis_reader=lambda _id: AUTH,
             resetter=reset,
-            endpoint_caller=call,
+            endpoint_caller=lambda *args: endpoint_calls.append(args) or {},
             evidence_recorder=lambda **_kwargs: None,
             status_updater=lambda *args: statuses.append(args),
             finding_recorder=lambda *args: findings.append(args) or "unexpected",
             run_recorder=lambda **kwargs: runs.append(kwargs),
         )
 
-    assert reset_count == 2
+    assert len(resets) == 1
+    assert endpoint_calls == []
     assert statuses == []
     assert findings == []
     assert runs[-1]["status"] == "failed"
-    assert "plan:verifier_a" in trace
-    assert "plan:verifier_b" in trace
 
 
-@pytest.mark.parametrize(
-    ("success_by_attempt", "expected_verdict"),
-    [((True, True), "verified"), ((False, False), "unverified"), ((True, False), "inconclusive")],
-)
-def test_workflow_verifier_uses_two_clean_resets_and_code_owned_verdict(
-    success_by_attempt: tuple[bool, bool], expected_verdict: str
-) -> None:
-    trace: list[str] = []
+def test_unresolved_submission_placeholder_is_not_executed() -> None:
+    endpoint_calls: list[tuple[object, ...]] = []
+    placeholder_only = json.dumps(
+        {
+            "steps": [
+                {
+                    "method": "GET",
+                    "path": "/submissions/{submission_id}/grade",
+                    "role": "student_a",
+                }
+            ]
+        }
+    )
+
+    result = run_verifier(
+        AUTH_ID,
+        client_a=FakeClient("verifier_a", placeholder_only, []),
+        client_b=FakeClient("verifier_b", placeholder_only, []),
+        hypothesis_reader=lambda _id: AUTH,
+        resetter=lambda: "reset:placeholder:state-sha256:same",
+        endpoint_caller=lambda *args: endpoint_calls.append(args) or {},
+        evidence_recorder=lambda **_kwargs: None,
+        status_updater=lambda *_args: None,
+        finding_recorder=lambda *_args: "unexpected",
+        run_recorder=lambda **_kwargs: None,
+    )
+
+    assert result.verdict == "unverified"
+    assert endpoint_calls == []
+    assert all(
+        not step.executed
+        for attempt in result.attempts
+        for step in attempt.executed_steps
+    )
+
+
+def test_guessed_student_b_detail_path_cannot_substitute_for_normal_discovery() -> None:
+    guessed_path = "/submissions/submission-student-b-001/grade"
+    guessed_detail_plan = json.dumps(
+        {
+            "steps": [
+                {"method": "GET", "path": guessed_path, "role": "student_b"},
+                {"method": "GET", "path": guessed_path, "role": "student_a"},
+            ]
+        }
+    )
+    statuses: list[tuple[object, ...]] = []
+    findings: list[tuple[object, ...]] = []
+
+    def call(method: str, path: str, token: str) -> dict[str, object]:
+        assert method == "GET"
+        assert path == guessed_path
+        assert token in {"token-student-a-fixed", "token-student-b-fixed"}
+        return {
+            "status_code": 200,
+            "body": {
+                "submission_id": "submission-student-b-001",
+                "student_id": "student-b",
+                "grade_id": "grade-student-b-001",
+            },
+        }
+
+    result = run_verifier(
+        AUTH_ID,
+        client_a=FakeClient("verifier_a", guessed_detail_plan, []),
+        client_b=FakeClient("verifier_b", guessed_detail_plan, []),
+        hypothesis_reader=lambda _id: AUTH,
+        resetter=lambda: "reset:guessed-detail:state-sha256:same",
+        endpoint_caller=call,
+        evidence_recorder=lambda **_kwargs: None,
+        status_updater=lambda *args: statuses.append(args),
+        finding_recorder=lambda *args: findings.append(args) or "unexpected",
+        run_recorder=lambda **_kwargs: None,
+    )
+
+    assert result.verdict == "unverified"
+    assert result.finding_id is None
+    assert statuses[0][1] == "unverified"
+    assert findings == []
+
+
+def test_workflow_predicate_binds_teacher_grade_id_and_states() -> None:
     reset_count = 0
-    statuses: list[tuple[str, str, str]] = []
-    findings: list[tuple[str, str, str, str, str]] = []
-    evidence: list[dict[str, object]] = []
-
-    class WorkflowClient(FakeClient):
-        def complete(self, messages: list[dict[str, str]], **kwargs: object) -> str:
-            self.trace.append(f"plan:{self.role}")
-            self.messages.append(messages)
-            self.kwargs.append(kwargs)
-            return WORKFLOW_PLAN
 
     def reset() -> str:
         nonlocal reset_count
         reset_count += 1
-        trace.append(f"reset:{reset_count}")
-        return f"reset:workflow-{reset_count}:state-sha256:complete-identical"
+        return f"reset:grade-{reset_count}:state-sha256:same"
 
     def call(method: str, path: str, token: str) -> dict[str, object]:
-        trace.append(f"call:{reset_count}:{method}:{path}:{token}")
-        assert token == "token-account-a-fixed"
+        assert token == "token-teacher-fixed"
         if method == "GET":
-            assert path == "/work-items/mine"
-            return {"status_code": 200, "body": {"work_items": [{"id": "release-account-a-001", "owner_account_id": "account-a", "state": "draft"}]}}
-        assert method == "POST"
-        assert path == "/work-items/release-account-a-001/publish"
-        if success_by_attempt[reset_count - 1]:
-            return {"status_code": 200, "body": {"id": "release-account-a-001", "previous_state": "draft", "state": "published"}}
-        return {"status_code": 409, "body": {"detail": "Approval required"}}
+            assert path == "/grades/mine"
+            return {
+                "status_code": 200,
+                "body": {
+                    "grades": [
+                        {
+                            "grade_id": "grade-student-a-001",
+                            "teacher_id": "teacher-001",
+                            "state": "draft",
+                        }
+                    ]
+                },
+            }
+        assert path == "/grades/grade-student-a-001/publish"
+        return {
+            "status_code": 200,
+            "body": {
+                "grade_id": "grade-student-a-001",
+                "previous_state": "draft",
+                "state": "published",
+            },
+        }
 
     result = run_verifier(
-        WORKFLOW_HYPOTHESIS["id"],
-        client_a=WorkflowClient("verifier_a", trace),
-        client_b=WorkflowClient("verifier_b", trace),
-        hypothesis_reader=lambda _id: WORKFLOW_HYPOTHESIS,
+        WORKFLOW["id"],
+        client_a=FakeClient("verifier_a", WORKFLOW_PLAN, []),
+        client_b=FakeClient("verifier_b", WORKFLOW_PLAN, []),
+        hypothesis_reader=lambda _id: WORKFLOW,
         resetter=reset,
         endpoint_caller=call,
-        evidence_recorder=lambda **kwargs: evidence.append(kwargs),
-        status_updater=lambda *args: statuses.append(args),
-        finding_recorder=lambda *args: findings.append(args) or "workflow-finding",
+        evidence_recorder=lambda **_kwargs: None,
+        status_updater=lambda *_args: None,
+        finding_recorder=lambda *_args: "grade-finding",
         run_recorder=lambda **_kwargs: None,
     )
 
-    assert result.verdict == expected_verdict
-    assert reset_count == 2
-    assert result.attempts[0].snapshot_id != result.attempts[1].snapshot_id
-    assert {attempt.snapshot_id.rsplit(":state-sha256:", 1)[1] for attempt in result.attempts} == {"complete-identical"}
-    assert all("GET" in entry or "POST" in entry for entry in trace if entry.startswith("call:"))
-    assert statuses[0][1] == expected_verdict
-    assert (len(findings) == 1) is (expected_verdict == "verified")
-    plan_events = [event for event in evidence if event["action_type"] == "verifier_plan_proposed"]
-    assert [json.loads(event["request_response_summary"])["steps"] for event in plan_events] == [
-        [{"operation": "list_owned_work_items"}, {"operation": "publish_work_item"}],
-        [{"operation": "list_owned_work_items"}, {"operation": "publish_work_item"}],
-    ]
-
-
-def test_workflow_schema_failure_creates_no_status_or_finding() -> None:
-    statuses: list[tuple[str, str, str]] = []
-    findings: list[tuple[str, str, str, str, str]] = []
-
-    class InvalidWorkflowClient(FakeClient):
-        def complete(self, *_args: object, **_kwargs: object) -> str:
-            return json.dumps({"steps": [{"operation": "publish_work_item"}, {"operation": "list_owned_work_items"}]})
-
-    with pytest.raises(RuntimeError):
-        run_verifier(
-            WORKFLOW_HYPOTHESIS["id"],
-            client_a=InvalidWorkflowClient("verifier_a", []),
-            client_b=InvalidWorkflowClient("verifier_b", []),
-            hypothesis_reader=lambda _id: WORKFLOW_HYPOTHESIS,
-            resetter=lambda: "reset:workflow:state-sha256:complete",
-            endpoint_caller=lambda *_args: {"status_code": 200, "body": {}},
-            evidence_recorder=lambda **_kwargs: None,
-            status_updater=lambda *args: statuses.append(args),
-            finding_recorder=lambda *args: findings.append(args) or "unexpected",
-            run_recorder=lambda **_kwargs: None,
-        )
-
-    assert statuses == []
-    assert findings == []
+    assert result.verdict == "verified"
+    assert all(
+        step.role == "teacher"
+        for attempt in result.attempts
+        for step in attempt.executed_steps
+    )

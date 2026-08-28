@@ -1,36 +1,29 @@
-"""A tiny notes app used only as Crack's disposable Sprint 1 target."""
+"""A tiny school portal used only as Crack's disposable local target."""
 
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
-from pydantic import BaseModel
 
 from .database import connect, initialize_database
 
 
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-class RecordUpdate(BaseModel):
-    title: str
-    body: str
-
-
-def current_account(authorization: str | None = Header(default=None)) -> dict[str, str]:
+def current_person(authorization: str | None = Header(default=None)) -> dict[str, str]:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
 
     token = authorization.removeprefix("Bearer ")
     with connect() as connection:
-        account = connection.execute(
-            "SELECT id, username, display_name FROM accounts WHERE token = ?", (token,)
+        person = connection.execute(
+            "SELECT id, role, display_name FROM people WHERE token = ?", (token,)
         ).fetchone()
-
-    if account is None:
+    if person is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid bearer token")
-    return dict(account)
+    return dict(person)
+
+
+def _require_role(person: dict[str, str], role: str) -> None:
+    if person["role"] != role:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Role is not allowed")
 
 
 @asynccontextmanager
@@ -39,7 +32,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Demo Notes App", lifespan=lifespan)
+app = FastAPI(title="Synthetic School Portal", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -47,120 +40,95 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/login")
-def login(request: LoginRequest) -> dict[str, str]:
+@app.get("/submissions/mine")
+def get_my_submissions(person: dict[str, str] = Depends(current_person)) -> dict[str, list[dict[str, str]]]:
+    """Return only the authenticated student's own submissions."""
+    _require_role(person, "student")
     with connect() as connection:
-        account = connection.execute(
-            "SELECT token, display_name FROM accounts WHERE username = ? AND password = ?",
-            (request.username, request.password),
-        ).fetchone()
-
-    if account is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password")
-    return {"access_token": account["token"], "account": account["display_name"]}
-
-
-@app.get("/records/mine")
-def get_my_records(account: dict[str, str] = Depends(current_account)) -> dict[str, list[dict[str, str]]]:
-    """Return the authenticated account's records for ordinary in-app navigation."""
-    with connect() as connection:
-        records = connection.execute(
+        submissions = connection.execute(
             """
-            SELECT id, owner_account_id, title, body
-            FROM records
-            WHERE owner_account_id = ?
-            ORDER BY id
+            SELECT submissions.id AS submission_id, submissions.assignment_id, submissions.student_id,
+                   grades.id AS grade_id, grades.state
+            FROM submissions
+            JOIN grades ON grades.submission_id = submissions.id
+            WHERE submissions.student_id = ?
+            ORDER BY submissions.id
             """,
-            (account["id"],),
+            (person["id"],),
         ).fetchall()
-    return {"records": [dict(record) for record in records]}
+    return {"submissions": [dict(submission) for submission in submissions]}
 
 
-def _owned_work_item(work_item_id: str, account_id: str):
-    with connect() as connection:
-        item = connection.execute(
-            "SELECT id, owner_account_id, title, state FROM work_items WHERE id = ? AND owner_account_id = ?",
-            (work_item_id, account_id),
-        ).fetchone()
-    if item is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work item not found")
-    return dict(item)
-
-
-@app.get("/work-items/mine")
-def get_my_work_items(account: dict[str, str] = Depends(current_account)) -> dict[str, list[dict[str, str]]]:
-    """Return the caller's workflow items for ordinary in-app navigation."""
-    with connect() as connection:
-        items = connection.execute(
-            "SELECT id, owner_account_id, title, state FROM work_items WHERE owner_account_id = ? ORDER BY id",
-            (account["id"],),
-        ).fetchall()
-    return {"work_items": [dict(item) for item in items]}
-
-
-@app.post("/work-items/{work_item_id}/approve")
-def approve_work_item(work_item_id: str, account: dict[str, str] = Depends(current_account)) -> dict[str, str]:
-    """Advance only a draft work item to approved."""
-    item = _owned_work_item(work_item_id, account["id"])
-    if item["state"] != "draft":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only draft work items can be approved")
-    with connect() as connection:
-        connection.execute("UPDATE work_items SET state = 'approved' WHERE id = ?", (work_item_id,))
-    return {"id": work_item_id, "previous_state": "draft", "state": "approved"}
-
-
-@app.post("/work-items/{work_item_id}/publish")
-def publish_work_item(work_item_id: str, account: dict[str, str] = Depends(current_account)) -> dict[str, str]:
-    """Publish an owned item; intentionally missing the required approved-state check."""
-    item = _owned_work_item(work_item_id, account["id"])
-    if item["state"] == "published":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Published work items are terminal")
-    # Intentional Sprint 7 defect: a draft item incorrectly bypasses approval here.
-    with connect() as connection:
-        connection.execute("UPDATE work_items SET state = 'published' WHERE id = ?", (work_item_id,))
-    return {"id": work_item_id, "previous_state": item["state"], "state": "published"}
-
-
-@app.get("/records/{record_id}")
-def get_record(record_id: str, _: dict[str, str] = Depends(current_account)) -> dict[str, str]:
-    """Return a note after confirming the caller has an authenticated session."""
-    with connect() as connection:
-        record = connection.execute(
-            "SELECT id, owner_account_id, title, body FROM records WHERE id = ?", (record_id,)
-        ).fetchone()
-
-    if record is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
-    return dict(record)
-
-
-@app.put("/records/{record_id}")
-def update_record(
-    record_id: str, update: RecordUpdate, account: dict[str, str] = Depends(current_account)
+@app.get("/submissions/{submission_id}/grade")
+def get_submission_grade(
+    submission_id: str, person: dict[str, str] = Depends(current_person)
 ) -> dict[str, str]:
-    """Write paths correctly restrict records to their owner."""
+    """Return one student submission and grade detail.
+
+    The deliberately seeded defect is here: an authenticated student is checked,
+    but the submission's student_id is not compared with that caller.
+    """
+    _require_role(person, "student")
     with connect() as connection:
-        record = connection.execute(
-            "SELECT id FROM records WHERE id = ? AND owner_account_id = ?",
-            (record_id, account["id"]),
+        detail = connection.execute(
+            """
+            SELECT submissions.id AS submission_id, submissions.assignment_id, submissions.student_id,
+                   submissions.body AS submission_body, grades.id AS grade_id,
+                   grades.feedback, grades.state
+            FROM submissions
+            JOIN grades ON grades.submission_id = submissions.id
+            WHERE submissions.id = ?
+            """,
+            (submission_id,),
         ).fetchone()
-        if record is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
-        connection.execute(
-            "UPDATE records SET title = ?, body = ? WHERE id = ?", (update.title, update.body, record_id)
-        )
-    return {"id": record_id, "status": "updated"}
+    if detail is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found")
+    return dict(detail)
 
 
-@app.delete("/records/{record_id}")
-def delete_record(record_id: str, account: dict[str, str] = Depends(current_account)) -> dict[str, str]:
-    """Write paths correctly restrict records to their owner."""
+def _teacher_grade(grade_id: str, teacher_id: str) -> dict[str, str]:
     with connect() as connection:
-        record = connection.execute(
-            "SELECT id FROM records WHERE id = ? AND owner_account_id = ?",
-            (record_id, account["id"]),
+        grade = connection.execute(
+            "SELECT id, submission_id, teacher_id, feedback, state FROM grades WHERE id = ? AND teacher_id = ?",
+            (grade_id, teacher_id),
         ).fetchone()
-        if record is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
-        connection.execute("DELETE FROM records WHERE id = ?", (record_id,))
-    return {"id": record_id, "status": "deleted"}
+    if grade is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grade not found")
+    return dict(grade)
+
+
+@app.get("/grades/mine")
+def get_my_grades(person: dict[str, str] = Depends(current_person)) -> dict[str, list[dict[str, str]]]:
+    """Return only the fixed teacher's grading work list."""
+    _require_role(person, "teacher")
+    with connect() as connection:
+        grades = connection.execute(
+            "SELECT id AS grade_id, submission_id, teacher_id, state FROM grades WHERE teacher_id = ? ORDER BY id",
+            (person["id"],),
+        ).fetchall()
+    return {"grades": [dict(grade) for grade in grades]}
+
+
+@app.post("/grades/{grade_id}/review")
+def review_grade(grade_id: str, person: dict[str, str] = Depends(current_person)) -> dict[str, str]:
+    """Advance only a teacher-owned draft grade to reviewed."""
+    _require_role(person, "teacher")
+    grade = _teacher_grade(grade_id, person["id"])
+    if grade["state"] != "draft":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only draft grades can be reviewed")
+    with connect() as connection:
+        connection.execute("UPDATE grades SET state = 'reviewed' WHERE id = ?", (grade_id,))
+    return {"grade_id": grade_id, "previous_state": "draft", "state": "reviewed"}
+
+
+@app.post("/grades/{grade_id}/publish")
+def publish_grade(grade_id: str, person: dict[str, str] = Depends(current_person)) -> dict[str, str]:
+    """Publish a teacher-owned grade; intentionally missing the reviewed-state check."""
+    _require_role(person, "teacher")
+    grade = _teacher_grade(grade_id, person["id"])
+    if grade["state"] == "published":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Published grades are terminal")
+    # Intentional Sprint 14 defect: a draft grade incorrectly bypasses review here.
+    with connect() as connection:
+        connection.execute("UPDATE grades SET state = 'published' WHERE id = ?", (grade_id,))
+    return {"grade_id": grade_id, "previous_state": grade["state"], "state": "published"}

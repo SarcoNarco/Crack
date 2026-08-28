@@ -11,7 +11,7 @@ from ledger import init_db
 from scope_controller import _gateway
 
 
-DEMO_TOKEN_A = "token-account-a-fixed"
+TEACHER_TOKEN = "token-teacher-fixed"
 
 
 def test_public_api_contains_only_the_declared_capabilities() -> None:
@@ -72,18 +72,18 @@ def test_query_app_map_is_an_explicit_sprint_4_stub() -> None:
         scope_controller.query_app_map()
 
 
-@pytest.mark.parametrize("method", ["PATCH", "OPTIONS", "TRACE", "CONNECT", "SHELL"])
+@pytest.mark.parametrize("method", ["PATCH", "OPTIONS", "TRACE", "CONNECT", "SHELL", "PUT", "DELETE"])
 def test_call_app_endpoint_rejects_non_allowlisted_methods(method: str) -> None:
-    with pytest.raises(PermissionError, match="GET, POST, PUT, DELETE"):
-        scope_controller.call_app_endpoint(method, "/health", DEMO_TOKEN_A)
+    with pytest.raises(PermissionError, match="GET, POST"):
+        scope_controller.call_app_endpoint(method, "/health", TEACHER_TOKEN)
 
 
 def test_call_app_endpoint_rejects_non_allowlisted_token() -> None:
-    with pytest.raises(PermissionError, match="not a seeded demo token"):
+    with pytest.raises(PermissionError, match="seeded synthetic person token"):
         scope_controller.call_app_endpoint("GET", "/health", "real-or-stolen-token")
 
 
-def test_call_app_endpoint_supports_only_the_fixed_workflow_post_shape(
+def test_call_app_endpoint_supports_only_the_fixed_grade_publish_post_shape(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, object] = {}
@@ -92,7 +92,7 @@ def test_call_app_endpoint_supports_only_the_fixed_workflow_post_shape(
         status = 200
 
         def read(self) -> bytes:
-            return b'{"id":"release-account-a-001","state":"published"}'
+            return b'{"grade_id":"grade-student-a-001","state":"published"}'
 
         def getheader(self, _name: str, _default: str = "") -> str:
             return "application/json"
@@ -116,7 +116,7 @@ def test_call_app_endpoint_supports_only_the_fixed_workflow_post_shape(
     monkeypatch.setattr(_gateway._http_client, "HTTPConnection", Connection)
 
     response = scope_controller.call_app_endpoint(
-        "POST", "/work-items/release-account-a-001/publish", DEMO_TOKEN_A
+        "POST", "/grades/grade-student-a-001/publish", TEACHER_TOKEN
     )
 
     assert captured == {
@@ -124,8 +124,8 @@ def test_call_app_endpoint_supports_only_the_fixed_workflow_post_shape(
         "port": 8100,
         "timeout": 5,
         "method": "POST",
-        "path": "/work-items/release-account-a-001/publish",
-        "headers": {"Authorization": "Bearer token-account-a-fixed"},
+        "path": "/grades/grade-student-a-001/publish",
+        "headers": {"Authorization": "Bearer token-teacher-fixed"},
         "closed": True,
     }
     assert response["status_code"] == 200
@@ -133,30 +133,46 @@ def test_call_app_endpoint_supports_only_the_fixed_workflow_post_shape(
 
 
 @pytest.mark.parametrize(
+    ("method", "path", "token"),
+    [
+        ("GET", "/records/mine", TEACHER_TOKEN),
+        ("GET", "/submissions/mine", "token-teacher-fixed"),
+        ("POST", "/grades/grade-student-a-001/review", "token-student-a-fixed"),
+        ("POST", "/grades/grade-student-a-001/publish/extra", TEACHER_TOKEN),
+    ],
+)
+def test_call_app_endpoint_rejects_every_route_outside_the_fixed_portal_allowlist(
+    method: str, path: str, token: str
+) -> None:
+    with pytest.raises(PermissionError, match="fixed allowed route"):
+        scope_controller.call_app_endpoint(method, path, token)
+
+
+@pytest.mark.parametrize(
     "path",
     [
-        "https://example.com/records/1",
-        "http://127.0.0.1:9999/records/1",
-        "//example.com/records/1",
-        "example.com/records/1",
+        "https://example.com/submissions/1/grade",
+        "http://127.0.0.1:9999/submissions/1/grade",
+        "//example.com/submissions/1/grade",
+        "example.com/submissions/1/grade",
     ],
 )
 def test_call_app_endpoint_rejects_every_alternate_host_or_url(path: str) -> None:
     with pytest.raises(PermissionError, match="fixed origin http://127.0.0.1:8100"):
-        scope_controller.call_app_endpoint("GET", path, DEMO_TOKEN_A)
+        scope_controller.call_app_endpoint("GET", path, TEACHER_TOKEN)
 
 
 @pytest.mark.parametrize("path", ["/health\r\nHost: example.com", "/health\\@example.com"])
 def test_call_app_endpoint_rejects_request_smuggling_paths(path: str) -> None:
     with pytest.raises(PermissionError, match="malformed endpoint path"):
-        scope_controller.call_app_endpoint("GET", path, DEMO_TOKEN_A)
+        scope_controller.call_app_endpoint("GET", path, TEACHER_TOKEN)
 
 
 def test_no_exposed_function_can_invoke_a_shell_command() -> None:
     with pytest.raises(AttributeError, match="run_shell"):
         getattr(scope_controller, "run_shell")("id")
     with pytest.raises(PermissionError, match="method must be one of"):
-        scope_controller.call_app_endpoint("SHELL", "/bin/sh -c id", DEMO_TOKEN_A)
+        scope_controller.call_app_endpoint("SHELL", "/bin/sh -c id", TEACHER_TOKEN)
 
     gateway_source = inspect.getsource(_gateway)
     banned_runtime_calls = ("subprocess", "os.system", "os.popen", "shell=True")
@@ -173,10 +189,10 @@ def test_reset_environment_calls_fixed_seed_and_ignores_environment_path(
 
     assert not outside_database.exists()
     with sqlite3.connect(_gateway._APP_DATABASE_PATH) as connection:
-        accounts = connection.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
-        records = connection.execute("SELECT COUNT(*) FROM records").fetchone()[0]
-        work_items = connection.execute("SELECT id, state FROM work_items ORDER BY id").fetchall()
-    assert (accounts, records, work_items) == (2, 2, [("release-account-a-001", "draft")])
+        people = connection.execute("SELECT COUNT(*) FROM people").fetchone()[0]
+        submissions = connection.execute("SELECT COUNT(*) FROM submissions").fetchone()[0]
+        grades = connection.execute("SELECT id, state FROM grades ORDER BY id").fetchall()
+    assert (people, submissions, grades) == (3, 2, [("grade-student-a-001", "draft"), ("grade-student-b-001", "draft")])
     assert snapshot_id.startswith("reset:")
     assert ":state-sha256:" in snapshot_id
 
@@ -196,7 +212,7 @@ def test_logical_state_hash_changes_when_workflow_state_changes() -> None:
     before = _gateway._seeded_state_hash()
     try:
         with sqlite3.connect(_gateway._APP_DATABASE_PATH) as connection:
-            connection.execute("UPDATE work_items SET state = 'approved' WHERE id = 'release-account-a-001'")
+            connection.execute("UPDATE grades SET state = 'reviewed' WHERE id = 'grade-student-a-001'")
 
         assert _gateway._seeded_state_hash() != before
     finally:
@@ -273,9 +289,9 @@ def test_submit_hypothesis_writes_unverified_row_and_audit_event(
 
     hypothesis_id = scope_controller.submit_hypothesis(
         "run-identity-1",
-        "GET /records/{id} checks record ownership",
-        "Account B can read Account A's record",
-        "A seeded Account B request returns Account A's record",
+        "GET /submissions/{submission_id}/grade checks student ownership",
+        "Student A can read Student B's submission detail",
+        "A seeded Student A request returns Student B's submission detail",
     )
 
     with sqlite3.connect(ledger_path) as connection:
@@ -293,9 +309,9 @@ def test_submit_hypothesis_writes_unverified_row_and_audit_event(
     assert hypothesis == (
         hypothesis_id,
         "run-identity-1",
-        "GET /records/{id} checks record ownership",
-        "Account B can read Account A's record",
-        "A seeded Account B request returns Account A's record",
+        "GET /submissions/{submission_id}/grade checks student ownership",
+        "Student A can read Student B's submission detail",
+        "A seeded Student A request returns Student B's submission detail",
         "unverified",
         None,
     )
@@ -345,7 +361,7 @@ def test_record_finding_rejects_unverified_hypothesis(
             "high impact",
             "1. Send request",
             "event://request-1",
-            "Enforce record ownership",
+            "Enforce student ownership",
         )
 
     with sqlite3.connect(ledger_path) as connection:
@@ -405,10 +421,10 @@ def test_record_finding_succeeds_after_verification(
 
     finding_id = scope_controller.record_finding(
         hypothesis_id,
-        "High impact: cross-account record disclosure",
-        "1. Authenticate as Account B. 2. Request Account A's record ID.",
+        "High impact: cross-student submission disclosure",
+        "1. Authenticate as Student A. 2. Request Student B's submission ID.",
         "event://run-verifier-4/2",
-        "Compare the authenticated account to the record owner before returning it.",
+        "Compare the authenticated student to the submission owner before returning it.",
     )
 
     with sqlite3.connect(ledger_path) as connection:
@@ -423,10 +439,10 @@ def test_record_finding_succeeds_after_verification(
     assert finding == (
         finding_id,
         hypothesis_id,
-        "High impact: cross-account record disclosure",
-        "1. Authenticate as Account B. 2. Request Account A's record ID.",
+        "High impact: cross-student submission disclosure",
+        "1. Authenticate as Student A. 2. Request Student B's submission ID.",
         "event://run-verifier-4/2",
-        "Compare the authenticated account to the record owner before returning it.",
+        "Compare the authenticated student to the submission owner before returning it.",
     )
 
 

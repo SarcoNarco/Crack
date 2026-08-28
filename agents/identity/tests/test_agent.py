@@ -3,18 +3,31 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agents.identity.agent import run_identity
+import pytest
+
+from agents.identity.agent import IdentityError, run_identity
 
 
 CONTRACT = {
     "routes": [
-        {"method": "GET", "path": "/health", "description": "Health check"},
-        {"method": "GET", "path": "/records/mine", "description": "My records"},
-        {"method": "GET", "path": "/records/{record_id}", "description": "Read one record"},
-        {"method": "PUT", "path": "/records/{record_id}", "description": "Update one record"},
+        {
+            "method": "GET",
+            "path": "/submissions/mine",
+            "description": "My submissions",
+        },
+        {
+            "method": "GET",
+            "path": "/submissions/{submission_id}/grade",
+            "description": "Read a submission grade",
+        },
+        {
+            "method": "POST",
+            "path": "/grades/{grade_id}/publish",
+            "description": "Publish grade",
+        },
     ],
-    "roles": ["account-a", "account-b"],
-    "assumptions": ["Accounts have records."],
+    "roles": ["Teacher", "Student A", "Student B"],
+    "assumptions": ["Synthetic portal."],
 }
 
 
@@ -34,132 +47,218 @@ def _contract_path(tmp_path: Path) -> Path:
     return path
 
 
-def _plan() -> str:
-    return json.dumps({"boundary_route": "/records/{record_id}"})
-
-
-def _account_b_records() -> dict[str, object]:
+def _student_b_submissions() -> dict[str, object]:
     return {
         "status_code": 200,
-        "body": {"records": [{"id": "note-account-b-001", "owner_account_id": "account-b"}]},
+        "body": {
+            "submissions": [
+                {
+                    "submission_id": "submission-student-b-001",
+                    "student_id": "student-b",
+                }
+            ]
+        },
     }
 
 
-def test_no_boundary_violation_does_not_submit_hypothesis(tmp_path: Path) -> None:
-    client = FakeClient([_plan()])
+def _detail_success() -> dict[str, object]:
+    return {
+        "status_code": 200,
+        "body": {
+            "submission_id": "submission-student-b-001",
+            "student_id": "student-b",
+            "grade_id": "grade-student-b-001",
+        },
+    }
+
+
+def _boundary_plan() -> str:
+    return json.dumps({"boundary_route": "/submissions/{submission_id}/grade"})
+
+
+def test_exact_student_b_submission_returned_to_student_a_submits_one_hypothesis(
+    tmp_path: Path,
+) -> None:
     calls: list[tuple[str, str, str]] = []
     submitted: list[tuple[str, str, str, str]] = []
+    client = FakeClient(
+        [
+            _boundary_plan(),
+            json.dumps(
+                {
+                    "concise_claim": "Student A can read Student B's grade detail.",
+                    "expected_evidence": (
+                        "Student B lists a submission and Student A receives its exact detail."
+                    ),
+                }
+            ),
+        ]
+    )
 
     def call(method: str, path: str, token: str) -> dict[str, object]:
         calls.append((method, path, token))
-        if path == "/records/mine":
-            return _account_b_records()
-        return {"status_code": 404, "body": {"detail": "Record not found"}}
-
-    result = run_identity(
-        client=client, contract_path=_contract_path(tmp_path), endpoint_caller=call,
-        evidence_recorder=lambda **_kwargs: None,
-        hypothesis_submitter=lambda *args: submitted.append(args) or "unexpected",
-        run_recorder=lambda **_kwargs: None,
-    )
-
-    assert calls == [
-        ("GET", "/records/mine", "token-account-b-fixed"),
-        ("GET", "/records/note-account-b-001", "token-account-a-fixed"),
-    ]
-    assert result.hypothesis_ids == []
-    assert submitted == []
-
-
-def test_boundary_violation_submits_llm_worded_hypothesis(tmp_path: Path) -> None:
-    claim = "Account A can read Account B's record via GET /records/{record_id} without ownership check"
-    client = FakeClient([
-        _plan(),
-        json.dumps({
-            "concise_claim": claim,
-            "expected_evidence": "Account B GET /records/mine reveals its record ID; Account A GET of that ID returns Account B's record.",
-        }),
-    ])
-    calls: list[tuple[str, str, str]] = []
-    submitted: list[tuple[str, str, str, str]] = []
-
-    def call(method: str, path: str, token: str) -> dict[str, object]:
-        calls.append((method, path, token))
-        if path == "/records/mine":
-            return _account_b_records()
-        return {
-            "status_code": 200,
-            "body": {"id": "note-account-b-001", "owner_account_id": "account-b"},
-        }
-
-    result = run_identity(
-        client=client, contract_path=_contract_path(tmp_path), endpoint_caller=call,
-        evidence_recorder=lambda **_kwargs: None,
-        hypothesis_submitter=lambda *args: submitted.append(args) or "hyp-123",
-        run_recorder=lambda **_kwargs: None,
-    )
-
-    assert calls == [
-        ("GET", "/records/mine", "token-account-b-fixed"),
-        ("GET", "/records/note-account-b-001", "token-account-a-fixed"),
-    ]
-    assert result.hypothesis_ids == ["hyp-123"]
-    assert submitted[0][1:3] == ("GET /records/{record_id} must enforce record ownership", claim)
-    assert client.requests == [
-        {"response_format": {"type": "json_object"}},
-        {"response_format": {"type": "json_object"}},
-    ]
-
-
-def test_identity_agent_never_exceeds_two_endpoint_calls(tmp_path: Path) -> None:
-    client = FakeClient([_plan()])
-    calls: list[tuple[str, str, str]] = []
-
-    def call(method: str, path: str, token: str) -> dict[str, object]:
-        calls.append((method, path, token))
-        return _account_b_records() if path == "/records/mine" else {"status_code": 403, "body": {}}
-
-    run_identity(
-        client=client, contract_path=_contract_path(tmp_path), endpoint_caller=call,
-        evidence_recorder=lambda **_kwargs: None,
-        hypothesis_submitter=lambda *args: "unexpected", run_recorder=lambda **_kwargs: None,
-    )
-
-    assert calls == [
-        ("GET", "/records/mine", "token-account-b-fixed"),
-        ("GET", "/records/note-account-b-001", "token-account-a-fixed"),
-    ]
-    assert all(method == "GET" and path != "/login" for method, path, _ in calls)
-
-
-def test_progress_observer_failure_does_not_change_identity_result(tmp_path: Path) -> None:
-    client = FakeClient([
-        _plan(),
-        json.dumps({
-            "concise_claim": "Account A can read Account B's record",
-            "expected_evidence": "The exact Account B record is returned to Account A.",
-        }),
-    ])
-
-    def call(_method: str, path: str, _token: str) -> dict[str, object]:
-        if path == "/records/mine":
-            return _account_b_records()
-        return {
-            "status_code": 200,
-            "body": {"id": "note-account-b-001", "owner_account_id": "account-b"},
-        }
-
-    def broken_observer(**_event: object) -> None:
-        raise RuntimeError("presentation unavailable")
+        return _student_b_submissions() if path == "/submissions/mine" else _detail_success()
 
     result = run_identity(
         client=client,
         contract_path=_contract_path(tmp_path),
         endpoint_caller=call,
         evidence_recorder=lambda **_kwargs: None,
-        hypothesis_submitter=lambda *_args: "hyp-123",
+        hypothesis_submitter=lambda *args: submitted.append(args) or "identity-hypothesis",
+        run_recorder=lambda **_kwargs: None,
+    )
+
+    assert calls == [
+        ("GET", "/submissions/mine", "token-student-b-fixed"),
+        (
+            "GET",
+            "/submissions/submission-student-b-001/grade",
+            "token-student-a-fixed",
+        ),
+    ]
+    assert result.hypothesis_ids == ["identity-hypothesis"]
+    assert (
+        submitted[0][1]
+        == "GET /submissions/{submission_id}/grade must enforce student ownership"
+    )
+    assert client.requests == [
+        {"response_format": {"type": "json_object"}},
+        {"response_format": {"type": "json_object"}},
+    ]
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        {"status_code": 403, "body": {}},
+        {
+            "status_code": 200,
+            "body": {
+                "submission_id": "other",
+                "student_id": "student-b",
+                "grade_id": "grade-student-b-001",
+            },
+        },
+        {
+            "status_code": 200,
+            "body": {
+                "submission_id": "submission-student-b-001",
+                "student_id": "student-a",
+                "grade_id": "grade-student-b-001",
+            },
+        },
+    ],
+)
+def test_incomplete_or_enforced_detail_does_not_submit(
+    tmp_path: Path,
+    detail: dict[str, object],
+) -> None:
+    submitted: list[tuple[object, ...]] = []
+
+    def call(_method: str, path: str, _token: str) -> dict[str, object]:
+        return _student_b_submissions() if path == "/submissions/mine" else detail
+
+    result = run_identity(
+        client=FakeClient([_boundary_plan()]),
+        contract_path=_contract_path(tmp_path),
+        endpoint_caller=call,
+        evidence_recorder=lambda **_kwargs: None,
+        hypothesis_submitter=lambda *args: submitted.append(args) or "unexpected",
+        run_recorder=lambda **_kwargs: None,
+    )
+
+    assert result.hypothesis_ids == []
+    assert submitted == []
+
+
+def test_identity_never_exceeds_two_fixed_get_calls(tmp_path: Path) -> None:
+    calls: list[tuple[str, str, str]] = []
+
+    def call(method: str, path: str, token: str) -> dict[str, object]:
+        calls.append((method, path, token))
+        return (
+            _student_b_submissions()
+            if path == "/submissions/mine"
+            else {"status_code": 403, "body": {}}
+        )
+
+    run_identity(
+        client=FakeClient([_boundary_plan()]),
+        contract_path=_contract_path(tmp_path),
+        endpoint_caller=call,
+        evidence_recorder=lambda **_kwargs: None,
+        hypothesis_submitter=lambda *_args: "unexpected",
+        run_recorder=lambda **_kwargs: None,
+    )
+
+    assert len(calls) == 2
+    assert all(method == "GET" for method, _path, _token in calls)
+    assert all(path.startswith("/submissions/") for _method, path, _token in calls)
+
+
+def test_progress_observer_failure_does_not_change_identity_result(tmp_path: Path) -> None:
+    def call(_method: str, path: str, _token: str) -> dict[str, object]:
+        return _student_b_submissions() if path == "/submissions/mine" else _detail_success()
+
+    def broken_observer(**_event: object) -> None:
+        raise RuntimeError("presentation unavailable")
+
+    result = run_identity(
+        client=FakeClient(
+            [
+                _boundary_plan(),
+                json.dumps(
+                    {
+                        "concise_claim": "Student A can read Student B's grade detail.",
+                        "expected_evidence": "The exact Student B submission is returned to Student A.",
+                    }
+                ),
+            ]
+        ),
+        contract_path=_contract_path(tmp_path),
+        endpoint_caller=call,
+        evidence_recorder=lambda **_kwargs: None,
+        hypothesis_submitter=lambda *_args: "identity-hypothesis",
         run_recorder=lambda **_kwargs: None,
         progress=broken_observer,
     )
 
-    assert result.hypothesis_ids == ["hyp-123"]
+    assert result.hypothesis_ids == ["identity-hypothesis"]
+
+
+def test_contract_or_plan_outside_the_fixed_submission_route_fails_closed(
+    tmp_path: Path,
+) -> None:
+    calls: list[tuple[object, ...]] = []
+
+    with pytest.raises(IdentityError, match="Student B discovery"):
+        run_identity(
+            client=FakeClient([json.dumps({"boundary_route": "/outside/{submission_id}"})]),
+            contract_path=_contract_path(tmp_path),
+            endpoint_caller=lambda *args: calls.append(args) or _student_b_submissions(),
+            evidence_recorder=lambda **_kwargs: None,
+            hypothesis_submitter=lambda *_args: "unexpected",
+            run_recorder=lambda **_kwargs: None,
+        )
+
+    bad_contract = {
+        **CONTRACT,
+        "routes": [
+            route
+            for route in CONTRACT["routes"]
+            if route["path"] != "/submissions/{submission_id}/grade"
+        ],
+    }
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps(bad_contract), encoding="utf-8")
+    with pytest.raises(IdentityError, match="Student B discovery"):
+        run_identity(
+            client=FakeClient([_boundary_plan()]),
+            contract_path=path,
+            endpoint_caller=lambda *args: calls.append(args) or _student_b_submissions(),
+            evidence_recorder=lambda **_kwargs: None,
+            hypothesis_submitter=lambda *_args: "unexpected",
+            run_recorder=lambda **_kwargs: None,
+        )
+
+    assert calls == []

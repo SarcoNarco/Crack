@@ -54,7 +54,7 @@ class ClientFactory(Protocol):
 @dataclass(frozen=True)
 class DemoDependencies:
     health_check: Callable[[], dict[str, object]] = lambda: call_app_endpoint(
-        "GET", "/health", "token-account-a-fixed"
+        "GET", "/health", "token-teacher-fixed"
     )
     client_factory: ClientFactory = get_client
     mapper: Callable[..., AppContract] = run_mapper
@@ -252,8 +252,8 @@ def run_demo(*, dependencies: DemoDependencies | None = None, output_root: Path 
             event_type="identity_reset.completed", stage="authorization", state="active",
             logical_role="coordinator", headline="Authorization reset completed",
             explanation=(
-                "A unique reset operation restored the same synthetic Account A, Account B, "
-                "and note fixtures."
+                "A unique reset operation restored the same synthetic Teacher, Student A, "
+                "Student B, class, assignment, submission, and grade fixtures."
             ),
             metadata={
                 "reset_id": identity_reset,
@@ -286,8 +286,8 @@ def run_demo(*, dependencies: DemoDependencies | None = None, output_root: Path 
             event_type="identity.completed", stage="authorization", state="completed",
             logical_role="identity", headline="Authorization test completed",
             explanation=(
-                "The bounded Account B to exact-record to Account A path completed and produced "
-                "one unverified hypothesis for independent checking."
+                "The bounded Student B discovery to exact-submission detail request by Student A "
+                "completed and produced one unverified hypothesis for independent checking."
             ),
             metadata={"identity_run_id": identity_run_id, "hypothesis_id": hypothesis_id},
             reference=f"ledger://hypothesis/{hypothesis_id}",

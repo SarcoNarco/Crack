@@ -231,6 +231,26 @@ def test_event_metadata_allowlist_and_secret_redaction_fail_closed(
     assert not journal.path.exists()
 
 
+def test_school_identity_events_accept_only_the_new_safe_metadata_shape(tmp_path: Path) -> None:
+    session_id = "demo:00000000-0000-4000-8000-000000000011"
+    journal = EventJournal(tmp_path, session_id, create=True)
+    event = journal.publish(
+        event_type="identity.student_b_discovery", stage="authorization", state="completed",
+        logical_role="identity", headline="Student B submission discovery completed",
+        explanation="Student B listed only the fixed synthetic submission.",
+        metadata={"status_code": 200, "submission_id": "submission-student-b-001", "student": "student_b"},
+        reference="scope-controller://call_app_endpoint/GET/submissions/mine",
+    )
+    assert event.metadata["submission_id"] == "submission-student-b-001"
+    with pytest.raises(ValueError, match="disallowed field"):
+        journal.publish(
+            event_type="identity.student_a_retrieval", stage="authorization", state="completed",
+            logical_role="identity", headline="Student A detail retrieval completed",
+            explanation="Safe metadata only.",
+            metadata={"record_id": "legacy-field"}, reference=None,
+        )
+
+
 def test_session_id_cannot_traverse_output_paths(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="invalid demo session ID"):
         EventJournal(tmp_path, "../../reports/output")

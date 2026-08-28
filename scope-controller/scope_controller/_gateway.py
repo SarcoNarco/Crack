@@ -11,6 +11,7 @@ import http.client as _http_client
 import hashlib as _hashlib
 import importlib.util as _importlib_util
 import json as _json
+import re as _re
 import sqlite3 as _sqlite3
 from datetime import UTC as _UTC
 from datetime import datetime as _datetime
@@ -37,9 +38,9 @@ _LEDGER_DATABASE_PATH: _Final = _REPOSITORY_ROOT / "data" / "ledger.db"
 _APP_HOST: _Final = "127.0.0.1"
 _APP_PORT: _Final = 8100
 _APP_ORIGIN: _Final = f"http://{_APP_HOST}:{_APP_PORT}"
-_ALLOWED_METHODS: _Final = frozenset({"GET", "POST", "PUT", "DELETE"})
-_ALLOWED_ACCOUNT_TOKENS: _Final = frozenset(
-    {"token-account-a-fixed", "token-account-b-fixed"}
+_ALLOWED_METHODS: _Final = frozenset({"GET", "POST"})
+_ALLOWED_PERSON_TOKENS: _Final = frozenset(
+    {"token-teacher-fixed", "token-student-a-fixed", "token-student-b-fixed"}
 )
 _SEED_LOCK: _Final = _threading.Lock()
 _VERIFICATION_STATUSES: _Final = frozenset(
@@ -100,6 +101,24 @@ def _validated_endpoint_path(path: str) -> str:
     return path
 
 
+def _allowlisted_endpoint(method: str, path: str, token: str) -> str:
+    """Allow only the fixed school-portal routes for their fixed synthetic roles."""
+    student_tokens = {"token-student-a-fixed", "token-student-b-fixed"}
+    if method == "GET" and path == "/health":
+        return path
+    if token in student_tokens and method == "GET" and path == "/submissions/mine":
+        return path
+    if token in student_tokens and method == "GET" and _re.fullmatch(r"/submissions/[A-Za-z0-9_-]{1,100}/grade", path):
+        return path
+    if token == "token-teacher-fixed" and method == "GET" and path == "/grades/mine":
+        return path
+    if token == "token-teacher-fixed" and method == "POST" and _re.fullmatch(
+        r"/grades/[A-Za-z0-9_-]{1,100}/(?:review|publish)", path
+    ):
+        return path
+    raise PermissionError("call_app_endpoint blocked: method and path are not a fixed allowed route")
+
+
 def call_app_endpoint(method: str, path: str, account_token: str) -> dict[str, object]:
     """Call the fixed demo app origin with a seeded identity and allowed verb."""
     if not isinstance(method, str):
@@ -107,12 +126,14 @@ def call_app_endpoint(method: str, path: str, account_token: str) -> dict[str, o
     normalized_method = method.upper()
     if normalized_method not in _ALLOWED_METHODS:
         raise PermissionError(
-            "call_app_endpoint blocked: method must be one of GET, POST, PUT, DELETE"
+            "call_app_endpoint blocked: method must be one of GET, POST"
         )
-    if account_token not in _ALLOWED_ACCOUNT_TOKENS:
-        raise PermissionError("call_app_endpoint blocked: account token is not a seeded demo token")
+    if account_token not in _ALLOWED_PERSON_TOKENS:
+        raise PermissionError("call_app_endpoint blocked: token is not a seeded synthetic person token")
 
-    endpoint_path = _validated_endpoint_path(path)
+    endpoint_path = _allowlisted_endpoint(
+        normalized_method, _validated_endpoint_path(path), account_token
+    )
     connection = _http_client.HTTPConnection(_APP_HOST, _APP_PORT, timeout=5)
     try:
         connection.request(
@@ -141,7 +162,7 @@ def call_app_endpoint(method: str, path: str, account_token: str) -> dict[str, o
 
 
 def _load_fixed_seed_module() -> _ModuleType:
-    """Load Sprint 1's seed module with its database path pinned in code."""
+    """Load the fixed disposable portal seed module with its database path pinned in code."""
     database_source = _APP_ROOT / "app" / "database.py"
     seed_source = _APP_ROOT / "scripts" / "seed.py"
 
@@ -150,7 +171,7 @@ def _load_fixed_seed_module() -> _ModuleType:
 
     database_spec = _importlib_util.spec_from_file_location("app.database", database_source)
     if database_spec is None or database_spec.loader is None:
-        raise RuntimeError("reset_environment blocked: Sprint 1 database module could not be loaded")
+        raise RuntimeError("reset_environment blocked: school portal database module could not be loaded")
     database_module = _importlib_util.module_from_spec(database_spec)
 
     previous_app = _sys.modules.get("app")
@@ -163,7 +184,7 @@ def _load_fixed_seed_module() -> _ModuleType:
 
         seed_spec = _importlib_util.spec_from_file_location("_crack_sprint1_seed", seed_source)
         if seed_spec is None or seed_spec.loader is None:
-            raise RuntimeError("reset_environment blocked: Sprint 1 seed script could not be loaded")
+            raise RuntimeError("reset_environment blocked: school portal seed script could not be loaded")
         seed_module = _importlib_util.module_from_spec(seed_spec)
         seed_spec.loader.exec_module(seed_module)
         return seed_module
@@ -181,17 +202,29 @@ def _load_fixed_seed_module() -> _ModuleType:
 def _seeded_state_hash() -> str:
     """Hash logical fixture rows, excluding SQLite's changing file metadata."""
     with _sqlite3.connect(_APP_DATABASE_PATH) as connection:
-        accounts = connection.execute(
-            "SELECT id, username, password, token, display_name FROM accounts ORDER BY id"
+        people = connection.execute(
+            "SELECT id, role, token, display_name FROM people ORDER BY id"
         ).fetchall()
-        records = connection.execute(
-            "SELECT id, owner_account_id, title, body FROM records ORDER BY id"
+        classes = connection.execute(
+            "SELECT id, teacher_id, title FROM classes ORDER BY id"
         ).fetchall()
-        work_items = connection.execute(
-            "SELECT id, owner_account_id, title, state FROM work_items ORDER BY id"
+        assignments = connection.execute(
+            "SELECT id, class_id, title FROM assignments ORDER BY id"
+        ).fetchall()
+        submissions = connection.execute(
+            "SELECT id, assignment_id, student_id, body FROM submissions ORDER BY id"
+        ).fetchall()
+        grades = connection.execute(
+            "SELECT id, submission_id, teacher_id, feedback, state FROM grades ORDER BY id"
         ).fetchall()
     logical_state = _json.dumps(
-        {"accounts": accounts, "records": records, "work_items": work_items},
+        {
+            "people": people,
+            "classes": classes,
+            "assignments": assignments,
+            "submissions": submissions,
+            "grades": grades,
+        },
         separators=(",", ":"),
         sort_keys=True,
     ).encode()

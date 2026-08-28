@@ -37,7 +37,7 @@ export type PreviewKind = 'success' | 'failure' | 'reconnect'
 export const STAGES: Array<{ key: StageKey; label: string; short: string }> = [
   { key: 'preflight', label: 'Preflight', short: 'Fixed local readiness' },
   { key: 'mapper', label: 'Mapper', short: 'Source-only contract' },
-  { key: 'authorization', label: 'Authorization tester', short: 'Account boundary' },
+  { key: 'authorization', label: 'Authorization tester', short: 'Student boundary' },
   { key: 'verifier_a', label: 'Independent check 1', short: 'Verifier A · sequential' },
   { key: 'verifier_b', label: 'Independent check 2', short: 'Verifier B · sequential' },
   { key: 'consensus', label: 'Code-owned consensus', short: 'Deterministic gate' },
