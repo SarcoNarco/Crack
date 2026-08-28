@@ -1,0 +1,38 @@
+:root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #17212b; background: #f4f7f5; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+button { font: inherit; }
+button:focus-visible, a:focus-visible { outline: 3px solid #1d6e8c; outline-offset: 3px; }
+.site-header { min-height: 70px; display: flex; justify-content: space-between; align-items: center; padding: 1rem max(5vw, 1.4rem); border-bottom: 1px solid #d9e0dc; background: #fff; }
+.brand { display: flex; align-items: center; gap: .7rem; color: #17212b; text-decoration: none; font-weight: 760; letter-spacing: -.02em; }
+.brand small { display: block; color: #5b6970; font-size: .7rem; letter-spacing: .05em; text-transform: uppercase; }
+.brand-mark { display: grid; width: 2rem; height: 2rem; place-items: center; border-radius: .5rem; color: #fff; background: #1e5265; font-family: Georgia, serif; font-size: 1.2rem; }
+.demo-label, .eyebrow { margin: 0; color: #536d64; font-size: .75rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.page-shell { width: min(1100px, calc(100% - 2rem)); margin: 0 auto; padding: 3.5rem 0 4rem; }
+.intro h1 { margin: .25rem 0; font-size: clamp(2rem, 5vw, 3.6rem); letter-spacing: -.045em; }
+.intro > p:last-child { margin: 0; color: #59666b; font-size: 1.05rem; }
+.role-switcher { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; margin: 2.3rem 0 1rem; padding: 1rem 1.1rem; border: 1px solid #d6dfda; border-radius: .8rem; background: #fff; font-weight: 650; }
+.role-buttons { display: flex; flex-wrap: wrap; gap: .45rem; }
+.role-button, .actions button, .empty-state button { padding: .6rem .85rem; border: 1px solid #b6c6bf; border-radius: .45rem; color: #24403a; background: #fff; cursor: pointer; font-weight: 700; }
+.role-button:hover, .role-button.is-active, .actions button:hover, .empty-state button:hover { border-color: #1e5265; color: #fff; background: #1e5265; }
+.role-button.is-active { box-shadow: inset 0 -2px 0 #9ed1bf; }
+.portal-status { min-height: 1.4rem; margin: .7rem 0 1rem; color: #536d64; font-size: .9rem; }
+.portal-status.is-error { color: #a52929; }
+.welcome-card, .submission-card, .grade-card, .empty-state { border: 1px solid #d6dfda; border-radius: .85rem; background: #fff; box-shadow: 0 8px 20px rgb(29 62 49 / 5%); }
+.welcome-card { padding: 1.45rem; margin-bottom: 1rem; }
+.welcome-card h2, .submission-card h2, .grade-card h2, .empty-state h2 { margin: .3rem 0 .5rem; letter-spacing: -.025em; }
+.welcome-card p:last-child, .feedback p, .submission-body { margin: 0; color: #47565c; line-height: 1.6; }
+.submission-card, .grade-card { padding: 1.45rem; }
+.card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding-bottom: 1rem; border-bottom: 1px solid #e5ebe7; }
+.card-heading h2 { font-size: 1.35rem; }
+.submission-card section { margin-top: 1.4rem; }
+.submission-card h3, .feedback strong { color: #314d44; font-size: .85rem; }
+.feedback { margin-top: 1.25rem; padding: 1rem; border-radius: .55rem; background: #f1f6f3; }
+.feedback p { margin-top: .35rem; }
+.state-pill { padding: .28rem .55rem; border-radius: 999px; font-size: .75rem; font-weight: 750; text-transform: capitalize; }
+.state-draft, .state-pending { color: #685411; background: #fff5cf; }.state-reviewed { color: #14546a; background: #dceff5; }.state-published { color: #22653d; background: #e0f4e7; }
+.grade-grid { display: grid; gap: 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 1.25rem; }.actions .secondary { color: #fff; border-color: #1e5265; background: #1e5265; }.actions button:disabled { cursor: not-allowed; opacity: .52; }
+.empty-state { padding: 2rem; text-align: center; }.empty-state p { color: #59666b; }.site-footer { padding: 1.4rem; border-top: 1px solid #d9e0dc; color: #5b6970; text-align: center; font-size: .8rem; }
+@media (max-width: 680px) { .site-header { align-items: flex-start; }.demo-label { max-width: 9rem; text-align: right; }.page-shell { padding-top: 2.3rem; }.role-switcher { align-items: flex-start; }.grade-grid { grid-template-columns: 1fr; }.card-heading { flex-direction: column; }.state-pill { align-self: flex-start; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }

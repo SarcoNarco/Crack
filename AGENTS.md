@@ -99,6 +99,10 @@ Live session `workflow_demo` completed. Workflow agent run `workflow:d3b6961f-4c
 
 Migrated the disposable target offline-only to a deterministic school portal with fixed Teacher, Student A, and Student B identities; fixed class, assignment, submission, and grade routes; and no live or provider run. The only intended defects are Student A's exact-ID read of Student B's private submission/grade detail and Teacher's direct draft-to-published grade transition despite the required `draft -> reviewed -> published` lifecycle. Fixed origin, role/token, method, and route containment; code-owned predicates/verdicts; sequential independent verifier resets; metadata-only evidence; verified-only findings; and ledger authority remain preserved. Offline acceptance currently passes 153 Python tests, 19 frontend tests, TypeScript checking, the production build, Compose configuration, and diff validation; the ledger is not modified.
 
+### Sprint 15
+
+Added a responsive same-origin target UI served by the existing `app-under-test` FastAPI container on loopback port 8100. The local portal has a synthetic Teacher/Student A/Student B role switcher, a Teacher grading queue with labels, feedback, lifecycle state, and existing review/publish actions, plus isolated student submission views built only from normal list APIs. Student responses expose `grade_status` as `pending` or `published`; grade ID and feedback appear only after publication. Static HTML, CSS, and JavaScript use no external resources; they do not surface the vulnerable exact-ID route or either other student's submission ID. The app's fixed scope-controller allowlist and bounded agent semantics remain unchanged. Offline verification passes 159 Python tests, plus 19 frontend tests, TypeScript checking, production build, Compose validation, and Docker visual QA; no provider or live Crack agent run is performed.
+
 ## Known follow-ups
 
 - None currently recorded. Repo-wide pytest collection uses importlib mode plus explicit repository-local package roots in `pytest.ini`, so same-named agent test modules remain isolated and `app-under-test` imports resolve without changing production package behavior.

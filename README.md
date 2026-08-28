@@ -65,6 +65,21 @@ The standalone report leads with expected versus actual behavior, explains the r
 
 ## Safe local tour
 
+### School portal
+
+The target application now has its own small, local school portal. It is separate from Crack's red-team operations console and uses only fixed synthetic data. Start the contained services, then open `http://127.0.0.1:8100` and choose Teacher, Student A, or Student B from the visible demo role switcher.
+
+```sh
+docker compose up --build -d
+docker compose exec -T app-under-test python -m scripts.seed
+```
+
+Teacher can review or publish grades from the grading queue. Each student view uses only its normal `GET /submissions/mine` data, shows an explicit pending state until feedback is published, and never presents the other student's submission ID or content. Stop the services after local use:
+
+```sh
+docker compose down
+```
+
 ### Provider-free UI preview
 
 This preview uses committed fixture events. It makes no provider calls and writes no ledger evidence.
@@ -143,7 +158,7 @@ docker compose config
 git diff --check
 ```
 
-- Python: **153 passed**
+- Python: **159 passed**
 - Frontend: **19 passed**
 - TypeScript check: passed
 - Production build: passed

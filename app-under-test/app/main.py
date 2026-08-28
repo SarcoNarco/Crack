@@ -1,8 +1,11 @@
 """A tiny school portal used only as Crack's disposable local target."""
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from .database import connect, initialize_database
 
@@ -33,11 +36,39 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Synthetic School Portal", lifespan=lifespan)
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+@app.get("/", include_in_schema=False)
+def portal_home() -> FileResponse:
+    """Serve the local-only school portal shell."""
+    return FileResponse(_STATIC_DIR / "index.html")
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def _student_submission_view(submission: dict[str, str]) -> dict[str, str]:
+    """Return normal student-facing context without unpublished grade details."""
+    is_published = submission["state"] == "published"
+    view = {
+        key: submission[key]
+        for key in (
+            "submission_id",
+            "assignment_id",
+            "student_id",
+            "submission_body",
+            "assignment_title",
+            "class_title",
+        )
+    }
+    view["grade_status"] = "published" if is_published else "pending"
+    if is_published:
+        view["grade_id"] = submission["grade_id"]
+        view["feedback"] = submission["feedback"]
+    return view
 
 
 @app.get("/submissions/mine")
@@ -48,15 +79,18 @@ def get_my_submissions(person: dict[str, str] = Depends(current_person)) -> dict
         submissions = connection.execute(
             """
             SELECT submissions.id AS submission_id, submissions.assignment_id, submissions.student_id,
-                   grades.id AS grade_id, grades.state
+                   submissions.body AS submission_body, grades.id AS grade_id, grades.feedback,
+                   grades.state, assignments.title AS assignment_title, classes.title AS class_title
             FROM submissions
             JOIN grades ON grades.submission_id = submissions.id
+            JOIN assignments ON assignments.id = submissions.assignment_id
+            JOIN classes ON classes.id = assignments.class_id
             WHERE submissions.student_id = ?
             ORDER BY submissions.id
             """,
             (person["id"],),
         ).fetchall()
-    return {"submissions": [dict(submission) for submission in submissions]}
+    return {"submissions": [_student_submission_view(dict(submission)) for submission in submissions]}
 
 
 @app.get("/submissions/{submission_id}/grade")
@@ -103,7 +137,18 @@ def get_my_grades(person: dict[str, str] = Depends(current_person)) -> dict[str,
     _require_role(person, "teacher")
     with connect() as connection:
         grades = connection.execute(
-            "SELECT id AS grade_id, submission_id, teacher_id, state FROM grades WHERE teacher_id = ? ORDER BY id",
+            """
+            SELECT grades.id AS grade_id, grades.submission_id, grades.teacher_id, grades.feedback,
+                   grades.state, people.display_name AS student_name, submissions.body AS submission_body,
+                   assignments.title AS assignment_title, classes.title AS class_title
+            FROM grades
+            JOIN submissions ON submissions.id = grades.submission_id
+            JOIN people ON people.id = submissions.student_id
+            JOIN assignments ON assignments.id = submissions.assignment_id
+            JOIN classes ON classes.id = assignments.class_id
+            WHERE grades.teacher_id = ?
+            ORDER BY grades.id
+            """,
             (person["id"],),
         ).fetchall()
     return {"grades": [dict(grade) for grade in grades]}
@@ -132,3 +177,6 @@ def publish_grade(grade_id: str, person: dict[str, str] = Depends(current_person
     with connect() as connection:
         connection.execute("UPDATE grades SET state = 'published' WHERE id = ?", (grade_id,))
     return {"grade_id": grade_id, "previous_state": grade["state"], "state": "published"}
+
+
+app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")

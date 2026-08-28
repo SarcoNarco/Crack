@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Northstar School Portal</title>
+    <link rel="stylesheet" href="/static/portal.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="Northstar School Portal home">
+        <span class="brand-mark" aria-hidden="true">N</span>
+        <span>Northstar School <small>Portal</small></span>
+      </a>
+      <p class="demo-label">Synthetic demo data</p>
+    </header>
+
+    <main class="page-shell">
+      <section class="intro" aria-labelledby="page-title">
+        <p class="eyebrow">Science department</p>
+        <h1 id="page-title">Science 101</h1>
+        <p>Ecosystems reflection · Local classroom workspace</p>
+      </section>
+
+      <nav class="role-switcher" aria-label="Synthetic role switcher">
+        <span>View portal as</span>
+        <div class="role-buttons" role="group" aria-label="Choose a synthetic role">
+          <button type="button" class="role-button" data-role="teacher">Teacher</button>
+          <button type="button" class="role-button" data-role="student-a">Student A</button>
+          <button type="button" class="role-button" data-role="student-b">Student B</button>
+        </div>
+      </nav>
+
+      <section id="portal-status" class="portal-status" role="status" aria-live="polite">Loading class workspace…</section>
+      <section id="portal-content" class="portal-content" aria-live="polite"></section>
+    </main>
+
+    <footer class="site-footer">Northstar School Portal uses fixed synthetic Teacher and student records for local demo use only.</footer>
+    <script src="/static/portal.js" defer></script>
+  </body>
+</html>
