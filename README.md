@@ -80,6 +80,24 @@ Teacher can review or publish grades from the grading queue. Each student view u
 docker compose down
 ```
 
+### Offline target registration (Sprint 16)
+
+Sprint 16 registers exactly one local target shape: the included synthetic school portal directory containing its strict `crack-target.json` and fixed `docker-compose.yml` descriptor. It does not support generic applications, remote targets, archives, Git clones, arbitrary compose settings, or runtime configuration.
+
+First inspect the whole folder. This only validates regular files, fixed generated-directory exclusions, strict manifest fields, secret/database rejection, and prints safe metadata plus a deterministic snapshot hash:
+
+```sh
+python -m targets.add /absolute/path/to/app-under-test
+```
+
+Approve only the exact hash printed by that inspection:
+
+```sh
+python -m targets.add /absolute/path/to/app-under-test --approve-sha256 <exact_snapshot_sha256>
+```
+
+Activation reinspects the folder, fails if it changed, then atomically copies the approved tree into ignored `targets/registry/` and writes one ignored `active-target.json` document. Repeating the same approved snapshot is idempotent. This Sprint does **not** run Docker, execute imported commands, start the imported target, connect it to agents, call providers, or modify the ledger. Runtime handoff is deferred to Sprint 17.
+
 ### Provider-free UI preview
 
 This preview uses committed fixture events. It makes no provider calls and writes no ledger evidence.
@@ -158,7 +176,7 @@ docker compose config
 git diff --check
 ```
 
-- Python: **159 passed**
+- Python: **188 passed, 1 warning**
 - Frontend: **19 passed**
 - TypeScript check: passed
 - Production build: passed
@@ -174,6 +192,7 @@ git diff --check
 - `reports/` — deterministic Markdown and standalone HTML renderer
 - `frontend/` — React operations console
 - `ui/` — deterministic terminal run view
+- `targets/` — strict offline manifest validation, tree inspection/hash plans, and approved snapshot registry
 - `docs/` — runbook, event contract, and portfolio screenshots
 
 ## Security and privacy
@@ -183,6 +202,7 @@ git diff --check
 - Never widen the fixed loopback target or capability allowlists.
 - Provider-backed runs send only bounded synthetic context declared by the role.
 - Event journals, generated reports, databases, caches, and local build output remain ignored.
+- Target registry snapshots and active-target metadata remain ignored; source folders are inspected only, never executed by registration.
 - Findings require complete evidence and code-owned verification; model prose alone is never sufficient.
 
 See [AGENTS.md](AGENTS.md) for authoritative architecture decisions, containment rules, and sprint history.

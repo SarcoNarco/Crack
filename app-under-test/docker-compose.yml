@@ -1,0 +1,5 @@
+services:
+  app-under-test:
+    build: .
+    expose:
+      - "8100"
