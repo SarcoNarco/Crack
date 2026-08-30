@@ -98,6 +98,24 @@ python -m targets.add /absolute/path/to/app-under-test --approve-sha256 <exact_s
 
 Activation reinspects the folder, fails if it changed, then atomically copies the approved tree into ignored `targets/registry/` and writes one ignored `active-target.json` document. Repeating the same approved snapshot is idempotent. This Sprint does **not** run Docker, execute imported commands, start the imported target, connect it to agents, call providers, or modify the ledger. Runtime handoff is deferred to Sprint 17.
 
+### Approved runtime handoff (Sprint 17)
+
+Sprint 17 can start only the active, hash-approved school-portal snapshot. It revalidates the active metadata, every snapshot file, its tree hash, and the canonical `Dockerfile` before every operation. It never reads a user-supplied Compose file or executes imported Compose settings.
+
+The required image is deliberately a pre-existing **local-only** image named `crack-approved-school-portal-runtime:v1`. Its exact labels must bind `io.crack.runtime=sprint-17`, `io.crack.project=crack-approved-school-portal`, the active target ID, the approved snapshot SHA-256, and the canonical Dockerfile SHA-256. Before every start, Crack requires its immutable `sha256:<64-hex>` image ID and rechecks the tag before running that ID with Docker `--pull=never`. These labels are a trusted local operator assertion about image provenance, not cryptographic proof of image contents. Crack never builds, pulls, or pushes this image: the current source Dockerfile installs Python packages online, so offline image provisioning remains an explicit trusted local prerequisite.
+
+After registration, use the exact approved hash:
+
+```sh
+python -m targets.runtime status
+python -m targets.runtime start --approve-sha256 <exact_snapshot_sha256>
+python -m targets.runtime stop
+```
+
+`start` owns one fixed non-attachable internal bridge network and one fixed container, publishes only `127.0.0.1:8100:8100`, uses a read-only root filesystem, `--user 65534:65534`, `--restart no`, dropped Linux capabilities, no-new-privileges, fixed limits, and only a bounded mode-`1777` tmpfs database directory. It runs the fixed `python -m scripts.seed` reset inside that verified image, then polls fixed loopback `/health`. Existing and newly created resources are fully re-inspected for their immutable image ID, exact inherited-plus-fixed environment, containment, network, and loopback binding before reuse or seed. It accepts no target, image, port, mount, environment, network, or command override. A failed start removes only resources it created in that attempt; if cleanup cannot verify or remove them, it reports incomplete rollback. `stop` acts only on fully matching resources.
+
+This is still separate from the scope controller, mapper, agents, coordinator, and ledger. It changes no scope-controller origin or reset ownership and does not authorize a provider-backed workflow. The tmpfs database is intentionally discarded when this runtime stops. Runtime evidence is mocked/offline only: Crack has not executed Docker here, so the trusted local image must support the fixed numeric user and tmpfs reset contract before any separately authorized live check. Sprint 18 is the separate approval gate for any integration work.
+
 ### Provider-free UI preview
 
 This preview uses committed fixture events. It makes no provider calls and writes no ledger evidence.
@@ -176,7 +194,7 @@ docker compose config
 git diff --check
 ```
 
-- Python: **188 passed, 1 warning**
+- Python: **203 passed, 1 warning**
 - Frontend: **19 passed**
 - TypeScript check: passed
 - Production build: passed
@@ -192,7 +210,7 @@ git diff --check
 - `reports/` — deterministic Markdown and standalone HTML renderer
 - `frontend/` — React operations console
 - `ui/` — deterministic terminal run view
-- `targets/` — strict offline manifest validation, tree inspection/hash plans, and approved snapshot registry
+- `targets/` — strict registration plus fixed, hash-bound local runtime handoff
 - `docs/` — runbook, event contract, and portfolio screenshots
 
 ## Security and privacy
@@ -202,7 +220,7 @@ git diff --check
 - Never widen the fixed loopback target or capability allowlists.
 - Provider-backed runs send only bounded synthetic context declared by the role.
 - Event journals, generated reports, databases, caches, and local build output remain ignored.
-- Target registry snapshots and active-target metadata remain ignored; source folders are inspected only, never executed by registration.
+- Target registry snapshots and active-target metadata remain ignored; registration never executes sources, and runtime accepts only a separately approved snapshot plus verified local image.
 - Findings require complete evidence and code-owned verification; model prose alone is never sufficient.
 
 See [AGENTS.md](AGENTS.md) for authoritative architecture decisions, containment rules, and sprint history.

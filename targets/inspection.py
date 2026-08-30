@@ -86,6 +86,7 @@ class PlannedFile:
     """One regular source file that is safe to copy after approval."""
 
     relative_path: str
+    source_relative_path: str
     source_path: Path
     size: int
     sha256: str
@@ -110,8 +111,8 @@ class ImportPlan:
 
 def inspect_target(source_root: str | Path, *, limits: ImportLimits = ImportLimits()) -> ImportPlan:
     """Validate a local source tree and calculate its exact content snapshot hash."""
-    root = _validate_source_root(source_root)
-    candidates = list(_walk_regular_files(root, limits))
+    root, root_stat = _validate_source_root(source_root)
+    candidates = list(_walk_regular_files(root, root_stat, limits))
     relative_paths = [candidate[0] for candidate in candidates]
     if MANIFEST_NAME not in relative_paths:
         raise TargetImportError("target manifest is missing")
@@ -121,7 +122,7 @@ def inspect_target(source_root: str | Path, *, limits: ImportLimits = ImportLimi
     planned_files: list[PlannedFile] = []
     total_bytes = 0
     aggregate = hashlib.sha256()
-    for relative_path, source_path, source_stat in candidates:
+    for relative_path, source_relative_path, source_path, source_stat in candidates:
         if _is_secret_bearing_name(relative_path):
             raise TargetImportError("secret-bearing or database file is not allowed")
         if source_stat.st_size > limits.max_file_bytes:
@@ -131,12 +132,15 @@ def inspect_target(source_root: str | Path, *, limits: ImportLimits = ImportLimi
         aggregate.update(relative_path.encode("utf-8"))
         aggregate.update(b"\0")
         aggregate.update(source_stat.st_size.to_bytes(8, "big"))
-        size, content_hash = _read_and_hash(source_path, source_stat, aggregate)
+        size, content_hash = _read_and_hash(
+            root, root_stat, source_relative_path, source_stat, aggregate
+        )
         total_bytes += size
-        _reject_credential_like_content(source_path, content_hash, source_stat)
+        _reject_credential_like_content(root, root_stat, source_relative_path, content_hash, source_stat)
         planned_files.append(
             PlannedFile(
                 relative_path=relative_path,
+                source_relative_path=source_relative_path,
                 source_path=source_path,
                 size=size,
                 sha256=content_hash,
@@ -147,7 +151,9 @@ def inspect_target(source_root: str | Path, *, limits: ImportLimits = ImportLimi
 
     planned_by_path = {file.relative_path: file for file in planned_files}
     try:
-        manifest = TargetManifest.from_json_bytes(_read_planned_bytes(planned_by_path[MANIFEST_NAME]))
+        manifest = TargetManifest.from_json_bytes(
+            _read_planned_bytes(root, root_stat, planned_by_path[MANIFEST_NAME])
+        )
     except ManifestValidationError as error:
         raise TargetImportError(str(error)) from error
     compose_hash = planned_by_path[manifest.compose_file].sha256
@@ -162,7 +168,7 @@ def inspect_target(source_root: str | Path, *, limits: ImportLimits = ImportLimi
     )
 
 
-def _validate_source_root(source_root: str | Path) -> Path:
+def _validate_source_root(source_root: str | Path) -> tuple[Path, os.stat_result]:
     root = Path(source_root)
     if not root.is_absolute() or ".." in root.parts:
         raise TargetImportError("source directory must be an absolute non-traversing path")
@@ -174,45 +180,63 @@ def _validate_source_root(source_root: str | Path) -> Path:
         raise TargetImportError("source directory may not be a symlink")
     if not stat.S_ISDIR(root_stat.st_mode):
         raise TargetImportError("source path is not a directory")
-    return root
+    return root, root_stat
 
 
-def _walk_regular_files(root: Path, limits: ImportLimits) -> Iterable[tuple[str, Path, os.stat_result]]:
+def _walk_regular_files(
+    root: Path, root_stat: os.stat_result, limits: ImportLimits
+) -> Iterable[tuple[str, str, Path, os.stat_result]]:
+    """Walk through pinned directory descriptors; never follow a path component."""
     seen_normalized: set[str] = set()
-    files: list[tuple[str, Path, os.stat_result]] = []
+    files: list[tuple[str, str, Path, os.stat_result]] = []
 
-    def walk(directory: Path, relative_directory: str) -> None:
+    def walk(directory_fd: int, relative_directory: str, source_relative_directory: str) -> None:
         try:
-            entries = sorted(os.scandir(directory), key=lambda entry: _normalized_component(entry.name))
+            entries = sorted(os.scandir(directory_fd), key=lambda entry: _normalized_component(entry.name))
         except OSError as error:
             raise TargetImportError("source directory cannot be inspected") from error
         for entry in entries:
             normalized_name = _normalized_component(entry.name)
             if not normalized_name or normalized_name in {".", ".."}:
                 raise TargetImportError("source contains an invalid path")
-            relative_path = normalized_name if not relative_directory else f"{relative_directory}/{normalized_name}"
+            relative_path = (
+                normalized_name if not relative_directory else f"{relative_directory}/{normalized_name}"
+            )
+            source_relative_path = (
+                entry.name
+                if not source_relative_directory
+                else f"{source_relative_directory}/{entry.name}"
+            )
             collision_key = relative_path.casefold()
             if collision_key in seen_normalized:
                 raise TargetImportError("source contains ambiguous normalized paths")
             seen_normalized.add(collision_key)
             try:
-                entry_stat = entry.stat(follow_symlinks=False)
+                entry_stat = os.stat(entry.name, dir_fd=directory_fd, follow_symlinks=False)
             except OSError as error:
                 raise TargetImportError("source contains an unreadable path") from error
             if stat.S_ISLNK(entry_stat.st_mode):
                 raise TargetImportError("source contains a symlink")
             if stat.S_ISDIR(entry_stat.st_mode):
-                if entry.name in _EXCLUDED_DIRECTORY_NAMES:
+                if normalized_name.casefold() in _EXCLUDED_DIRECTORY_NAMES:
                     continue
-                walk(Path(entry.path), relative_path)
+                child_fd = _open_directory_at(directory_fd, entry.name, entry_stat)
+                try:
+                    walk(child_fd, relative_path, source_relative_path)
+                finally:
+                    os.close(child_fd)
                 continue
             if not stat.S_ISREG(entry_stat.st_mode):
                 raise TargetImportError("source contains a non-regular file")
-            files.append((relative_path, Path(entry.path), entry_stat))
+            files.append((relative_path, source_relative_path, root / source_relative_path, entry_stat))
             if len(files) > limits.max_files:
                 raise TargetImportError("file cap exceeded")
 
-    walk(root, "")
+    root_fd = _open_directory(root, root_stat)
+    try:
+        walk(root_fd, "", "")
+    finally:
+        os.close(root_fd)
     yield from sorted(files, key=lambda item: item[0])
 
 
@@ -232,9 +256,13 @@ def _is_secret_bearing_name(relative_path: str) -> bool:
 
 
 def _read_and_hash(
-    path: Path, expected_stat: os.stat_result, aggregate: hashlib._Hash
+    root: Path,
+    root_stat: os.stat_result,
+    source_relative_path: str,
+    expected_stat: os.stat_result,
+    aggregate: hashlib._Hash,
 ) -> tuple[int, str]:
-    descriptor = _open_regular_file(path)
+    descriptor = _open_regular_file(root, root_stat, source_relative_path)
     try:
         current_stat = os.fstat(descriptor)
         if (
@@ -257,9 +285,15 @@ def _read_and_hash(
         os.close(descriptor)
 
 
-def _reject_credential_like_content(path: Path, digest: str, expected_stat: os.stat_result) -> None:
+def _reject_credential_like_content(
+    root: Path,
+    root_stat: os.stat_result,
+    source_relative_path: str,
+    digest: str,
+    expected_stat: os.stat_result,
+) -> None:
     del digest
-    descriptor = _open_regular_file(path)
+    descriptor = _open_regular_file(root, root_stat, source_relative_path)
     try:
         current_stat = os.fstat(descriptor)
         if current_stat.st_dev != expected_stat.st_dev or current_stat.st_ino != expected_stat.st_ino:
@@ -280,8 +314,8 @@ def _reject_credential_like_content(path: Path, digest: str, expected_stat: os.s
         raise TargetImportError("credential-like file content is not allowed")
 
 
-def _read_planned_bytes(planned_file: PlannedFile) -> bytes:
-    descriptor = _open_regular_file(planned_file.source_path)
+def _read_planned_bytes(root: Path, root_stat: os.stat_result, planned_file: PlannedFile) -> bytes:
+    descriptor = _open_regular_file(root, root_stat, planned_file.source_relative_path)
     try:
         current_stat = os.fstat(descriptor)
         if (
@@ -300,11 +334,58 @@ def _read_planned_bytes(planned_file: PlannedFile) -> bytes:
         os.close(descriptor)
 
 
-def _open_regular_file(path: Path) -> int:
-    flags = os.O_RDONLY
+def _open_directory(path: Path, expected_stat: os.stat_result | None = None) -> int:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     try:
-        return os.open(path, flags)
+        descriptor = os.open(path, flags)
     except OSError as error:
-        raise TargetImportError("source file cannot be read safely") from error
+        raise TargetImportError("source directory cannot be inspected safely") from error
+    current = os.fstat(descriptor)
+    if (
+        not stat.S_ISDIR(current.st_mode)
+        or (expected_stat is not None and (current.st_dev != expected_stat.st_dev or current.st_ino != expected_stat.st_ino))
+    ):
+        os.close(descriptor)
+        raise TargetImportError("source changed during inspection")
+    return descriptor
+
+
+def _open_directory_at(parent_fd: int, component: str, expected_stat: os.stat_result) -> int:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(component, flags, dir_fd=parent_fd)
+    except OSError as error:
+        raise TargetImportError("source directory cannot be inspected safely") from error
+    current = os.fstat(descriptor)
+    if not stat.S_ISDIR(current.st_mode) or (
+        current.st_dev != expected_stat.st_dev or current.st_ino != expected_stat.st_ino
+    ):
+        os.close(descriptor)
+        raise TargetImportError("source changed during inspection")
+    return descriptor
+
+
+def _open_regular_file(root: Path, root_stat: os.stat_result, source_relative_path: str) -> int:
+    parts = source_relative_path.split("/")
+    if not parts or any(not part or part in {".", ".."} for part in parts):
+        raise TargetImportError("source contains an invalid path")
+    directory_fd = _open_directory(root, root_stat)
+    try:
+        for component in parts[:-1]:
+            entry_stat = os.stat(component, dir_fd=directory_fd, follow_symlinks=False)
+            child_fd = _open_directory_at(directory_fd, component, entry_stat)
+            os.close(directory_fd)
+            directory_fd = child_fd
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            return os.open(parts[-1], flags, dir_fd=directory_fd)
+        except OSError as error:
+            raise TargetImportError("source file cannot be read safely") from error
+    finally:
+        os.close(directory_fd)

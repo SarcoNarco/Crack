@@ -274,6 +274,35 @@ def test_fixed_generated_directories_are_excluded_from_hash_and_snapshot(tmp_pat
     assert not (snapshot / "node_modules").exists()
 
 
+def test_casefolded_fixed_generated_directory_is_excluded(tmp_path: Path) -> None:
+    source = _target(tmp_path)
+    generated = source / "NODE_MODULES"
+    generated.mkdir()
+    (generated / ".env").write_text("API_KEY=excluded-generated-value", encoding="utf-8")
+
+    assert inspect_target(source).file_count == 3
+
+
+def test_directory_replacement_during_descriptor_walk_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _target(tmp_path)
+    nested = source / "nested"
+    nested.mkdir()
+    (nested / "module.py").write_text("safe", encoding="utf-8")
+    original = __import__("targets.inspection", fromlist=["_open_directory_at"])._open_directory_at
+
+    def replace_directory(parent_fd: int, component: str, expected_stat: os.stat_result) -> int:
+        if component == "nested":
+            nested.rename(source / "nested-replaced")
+            nested.mkdir()
+        return original(parent_fd, component, expected_stat)
+
+    monkeypatch.setattr("targets.inspection._open_directory_at", replace_directory)
+    with pytest.raises(TargetImportError, match="changed"):
+        inspect_target(source)
+
+
 def test_failed_copy_cleans_staging_and_never_writes_active_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -324,10 +353,29 @@ def test_overlap_rejects_symlink_aliases_without_creating_nested_registry(tmp_pa
     assert not nested_registry.exists()
 
 
+def test_registry_parent_component_symlink_is_rejected_before_write(tmp_path: Path) -> None:
+    source = _target(tmp_path)
+    plan = inspect_target(source)
+    real_parent = tmp_path / "real-parent"
+    real_parent.mkdir()
+    symlink_parent = tmp_path / "symlink-parent"
+    symlink_parent.symlink_to(real_parent, target_is_directory=True)
+
+    with pytest.raises(TargetImportError, match="registry directory is not safe"):
+        register_approved(source, plan.snapshot_sha256, registry_root=symlink_parent / "registry")
+
+    assert not (real_parent / "registry").exists()
+
 def test_importer_has_no_execution_network_or_provider_imports() -> None:
     forbidden = {"subprocess", "socket", "requests", "httpx", "urllib", "docker", "openai", "tarfile", "zipfile"}
     imported: set[str] = set()
-    for path in (ROOT / "targets").glob("*.py"):
+    for path in (
+        ROOT / "targets" / "__init__.py",
+        ROOT / "targets" / "add.py",
+        ROOT / "targets" / "inspection.py",
+        ROOT / "targets" / "manifest.py",
+        ROOT / "targets" / "registry.py",
+    ):
         module = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(module):
             if isinstance(node, ast.Import):

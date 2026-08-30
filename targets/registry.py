@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from .inspection import ImportPlan, PlannedFile, TargetImportError, inspect_target
+from .inspection import ImportPlan, PlannedFile, TargetImportError, _open_regular_file, inspect_target
 
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -93,17 +93,23 @@ def _prepare_registry_root(registry_root: Path) -> Path:
 
 
 def _ensure_directory(path: Path) -> Path:
+    """Create or validate each parent through non-following directory descriptors."""
+    if not path.is_absolute() or ".." in path.parts:
+        raise TargetImportError("registry directory is not safe")
+    descriptor = _open_absolute_directory_chain(path, create=True)
     try:
-        path.mkdir(parents=True, exist_ok=True)
-        path_stat = os.lstat(path)
+        path_stat = os.fstat(descriptor)
     except OSError as error:
         raise TargetImportError("registry directory cannot be prepared") from error
+    finally:
+        os.close(descriptor)
     if stat.S_ISLNK(path_stat.st_mode) or not stat.S_ISDIR(path_stat.st_mode):
         raise TargetImportError("registry directory is not safe")
     return path
 
 
 def _path_exists_without_following(path: Path) -> bool:
+    _validate_existing_parent_chain(path.parent)
     try:
         path_stat = os.lstat(path)
     except FileNotFoundError:
@@ -122,6 +128,7 @@ def _reject_overlapping_source(source_root: Path, registry_root: Path) -> None:
 
 def _make_staging_directory(registry_root: Path) -> Path:
     stage = registry_root / f".staging-{uuid4().hex}"
+    _validate_existing_parent_chain(registry_root)
     try:
         stage.mkdir(mode=0o700)
     except OSError as error:
@@ -161,11 +168,14 @@ def _copy_regular_file(planned_file: PlannedFile, destination: Path) -> None:
 
 
 def _open_planned_file(planned_file: PlannedFile) -> int:
-    flags = os.O_RDONLY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    root = planned_file.source_path
+    for _ in planned_file.source_relative_path.split("/"):
+        root = root.parent
     try:
-        descriptor = os.open(planned_file.source_path, flags)
+        root_stat = os.lstat(root)
+        if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
+            raise TargetImportError("source file cannot be copied safely")
+        descriptor = _open_regular_file(root, root_stat, planned_file.source_relative_path)
         source_stat = os.fstat(descriptor)
     except OSError as error:
         raise TargetImportError("source file cannot be copied safely") from error
@@ -202,6 +212,7 @@ def _write_active_metadata(registry_root: Path, plan: ImportPlan) -> None:
     }
     encoded = (json.dumps(metadata, indent=2, sort_keys=True) + "\n").encode("utf-8")
     active_metadata = registry_root / _ACTIVE_METADATA_NAME
+    _validate_existing_parent_chain(registry_root)
     try:
         active_stat = os.lstat(active_metadata)
     except FileNotFoundError:
@@ -242,3 +253,55 @@ def _remove_tree_no_follow(path: Path) -> None:
             else:
                 child.unlink(missing_ok=True)
     path.rmdir()
+
+
+def _validate_existing_parent_chain(path: Path) -> None:
+    descriptor = _open_absolute_directory_chain(path, create=False)
+    os.close(descriptor)
+
+
+def _open_absolute_directory_chain(path: Path, *, create: bool) -> int:
+    """Open every absolute directory component without following symlinks."""
+    if not path.is_absolute() or ".." in path.parts:
+        raise TargetImportError("registry directory is not safe")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path.anchor, flags)
+    except OSError as error:
+        raise TargetImportError("registry directory cannot be prepared") from error
+    try:
+        for component in path.parts[1:]:
+            try:
+                entry_stat = os.stat(component, dir_fd=descriptor, follow_symlinks=False)
+            except FileNotFoundError:
+                if not create:
+                    raise TargetImportError("registry directory is not safe") from None
+                try:
+                    os.mkdir(component, mode=0o700, dir_fd=descriptor)
+                    entry_stat = os.stat(component, dir_fd=descriptor, follow_symlinks=False)
+                except OSError as error:
+                    raise TargetImportError("registry directory cannot be prepared") from error
+            except OSError as error:
+                raise TargetImportError("registry directory cannot be prepared") from error
+            if stat.S_ISLNK(entry_stat.st_mode) or not stat.S_ISDIR(entry_stat.st_mode):
+                raise TargetImportError("registry directory is not safe")
+            try:
+                child = os.open(component, flags, dir_fd=descriptor)
+            except OSError as error:
+                raise TargetImportError("registry directory is not safe") from error
+            current = os.fstat(child)
+            if (
+                not stat.S_ISDIR(current.st_mode)
+                or current.st_dev != entry_stat.st_dev
+                or current.st_ino != entry_stat.st_ino
+            ):
+                os.close(child)
+                raise TargetImportError("registry directory changed during preparation")
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
