@@ -114,7 +114,20 @@ python -m targets.runtime stop
 
 `start` owns one fixed non-attachable internal bridge network and one fixed container, publishes only `127.0.0.1:8100:8100`, uses a read-only root filesystem, `--user 65534:65534`, `--restart no`, dropped Linux capabilities, no-new-privileges, fixed limits, and only a bounded mode-`1777` tmpfs database directory. It runs the fixed `python -m scripts.seed` reset inside that verified image, then polls fixed loopback `/health`. Existing and newly created resources are fully re-inspected for their immutable image ID, exact inherited-plus-fixed environment, containment, network, and loopback binding before reuse or seed. It accepts no target, image, port, mount, environment, network, or command override. A failed start removes only resources it created in that attempt; if cleanup cannot verify or remove them, it reports incomplete rollback. `stop` acts only on fully matching resources.
 
-This is still separate from the scope controller, mapper, agents, coordinator, and ledger. It changes no scope-controller origin or reset ownership and does not authorize a provider-backed workflow. The tmpfs database is intentionally discarded when this runtime stops. Runtime evidence is mocked/offline only: Crack has not executed Docker here, so the trusted local image must support the fixed numeric user and tmpfs reset contract before any separately authorized live check. Sprint 18 is the separate approval gate for any integration work.
+This is still separate from the scope controller, mapper, agents, coordinator, and ledger. It changes no scope-controller origin or reset ownership and does not authorize a provider-backed workflow. The tmpfs database is intentionally discarded when this runtime stops. Runtime evidence is mocked/offline only: Crack has not executed Docker here, so the trusted local image must support the fixed numeric user and tmpfs reset contract before any separately authorized live check.
+
+### Offline architecture map (Sprint 18)
+
+Sprint 18 reads only the ignored active-target metadata and its exact approved registry snapshot. Before mapping, descriptor-pinned, non-following registry traversal revalidates the strict manifest and whole snapshot hash; metadata, registry, snapshots, and allowlisted source identities are checked again around analysis, so replacement races fail closed. It then uses constrained Python AST and fixed SQL-schema analysis only for the supported school portal; it never imports or executes target code and never reads target-controlled HTML or JavaScript labels.
+
+```sh
+python -m targets.architecture
+python -m targets.architecture --write
+```
+
+The first command prints deterministic JSON. `--write` additionally atomically writes the same JSON to the fixed ignored path `targets/architecture-output/architecture.json`; there is no registry-root or output-path override. The frontend-ready graph identifies the static browser portal, FastAPI API, fixed role/authentication boundary, submissions, grade lifecycle domain, and SQLite persistence. It does not claim review-before-publish enforcement: the approved portal currently permits direct draft-to-published publication. Node and edge facts are source-derived; normalized coordinates are explicitly presentation-only layout.
+
+This sprint does not execute Docker or Compose, run a target, call a provider, use credentials, contact a network service, invoke the scope controller, coordinator, agents, or ledger, write target or registry state, add event streaming, or add animation. It is not a generic repository mapper. Sprint 19 must be separately authorized for any presentation integration, streaming, animation, runtime handoff, or scope-controller ownership change.
 
 ### Provider-free UI preview
 
@@ -194,10 +207,8 @@ docker compose config
 git diff --check
 ```
 
-- Python: **203 passed, 1 warning**
-- Frontend: **19 passed**
-- TypeScript check: passed
-- Production build: passed
+- Python: **246 passed, 1 warning**
+- Frontend: **19 tests passed**; TypeScript check and production build: passed
 - Docker Compose configuration: passed
 
 ## Repository guide

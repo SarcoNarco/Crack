@@ -5,34 +5,27 @@ from __future__ import annotations
 import argparse
 import hashlib
 import http.client
-import json
 import os
 import re
-import stat
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Final
 
+from .active import ActiveTarget, ActiveTargetError, load_active_target, read_active_file
 from .docker_adapter import (
     CONTAINER_NAME,
     DockerAdapter,
     DockerCommandError,
     NETWORK_NAME,
-    TARGET_ID,
     required_labels,
 )
-from .inspection import ImportPlan, TargetImportError, inspect_target
-from .registry import DEFAULT_REGISTRY_ROOT, _validate_existing_parent_chain
+from .inspection import TargetImportError
+from .registry import DEFAULT_REGISTRY_ROOT
 
 
-_SNAPSHOTS_DIRECTORY: Final = "snapshots"
-_ACTIVE_METADATA_NAME: Final = "active-target.json"
-_ACTIVE_SCHEMA_VERSION: Final = 1
-_FIXED_SERVICE: Final = "app-under-test"
 _FIXED_PORT: Final = 8100
 _FIXED_HEALTH_PATH: Final = "/health"
-_FIXED_RESET_PROFILE: Final = "school-portal-v1"
 _FIXED_DOCKERFILE_PATH: Final = "Dockerfile"
 _FIXED_DOCKERFILE_CONTENT: Final = (
     b"FROM python:3.12-slim\n"
@@ -59,14 +52,6 @@ _FORBIDDEN_ENVIRONMENT_NAMES: Final = frozenset({"GROQ_API_KEY", "GEMINI_API_KEY
 
 class RuntimeHandoffError(TargetImportError):
     """Safe failure for missing, changed, or unusable approved runtime state."""
-
-
-@dataclass(frozen=True)
-class ActiveTarget:
-    """Fully revalidated local registry state, without source-folder reference."""
-
-    snapshot_root: Path
-    plan: ImportPlan
 
 
 @dataclass(frozen=True)
@@ -218,83 +203,30 @@ class RuntimeService:
             raise RuntimeHandoffError("fixed Docker runtime operation failed") from error
 
     def _load_active_target(self) -> ActiveTarget:
-        registry_root = _require_directory(self._registry_root, "target registry")
-        metadata = _read_active_metadata(registry_root)
-        snapshot_sha256 = metadata["snapshot_sha256"]
-        snapshots_root = _require_directory(registry_root / _SNAPSHOTS_DIRECTORY, "target snapshots")
-        snapshot_root = _require_directory(snapshots_root / snapshot_sha256, "approved target snapshot")
         try:
-            plan = inspect_target(snapshot_root)
-        except TargetImportError as error:
-            raise RuntimeHandoffError("active approved snapshot is unsafe or malformed") from error
-        if plan.snapshot_sha256 != snapshot_sha256:
-            raise RuntimeHandoffError("active approved snapshot hash changed")
-        if metadata["snapshot_directory"] != f"{_SNAPSHOTS_DIRECTORY}/{snapshot_sha256}":
-            raise RuntimeHandoffError("active target metadata is mismatched")
-        if metadata != _expected_metadata(plan):
-            raise RuntimeHandoffError("active target metadata is mismatched")
-        _require_fixed_dockerfile(plan)
-        return ActiveTarget(snapshot_root=snapshot_root, plan=plan)
+            active = load_active_target(self._registry_root)
+        except ActiveTargetError as error:
+            raise RuntimeHandoffError(str(error)) from error
+        _require_fixed_dockerfile(active)
+        return active
 
 
 def _status(state: str, active: ActiveTarget) -> RuntimeStatus:
     return RuntimeStatus(state=state, snapshot_sha256=active.plan.snapshot_sha256, target_id=active.plan.manifest.target_id)
 
 
-def _expected_metadata(plan: ImportPlan) -> dict[str, object]:
-    return {
-        "schema_version": _ACTIVE_SCHEMA_VERSION,
-        "snapshot_sha256": plan.snapshot_sha256,
-        "snapshot_directory": f"{_SNAPSHOTS_DIRECTORY}/{plan.snapshot_sha256}",
-        **plan.manifest.as_metadata(),
-    }
-
-
-def _read_active_metadata(registry_root: Path) -> dict[str, object]:
-    content = _read_regular_file(registry_root / _ACTIVE_METADATA_NAME, "active target metadata")
-    try:
-        raw = json.loads(content.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise RuntimeHandoffError("active target metadata is malformed") from error
-    shape = _expected_metadata_shape()
-    if not isinstance(raw, dict) or set(raw) != set(shape):
-        raise RuntimeHandoffError("active target metadata is malformed")
-    for key, expected_type in shape.items():
-        if type(raw[key]) is not expected_type:
-            raise RuntimeHandoffError("active target metadata is malformed")
-    if (
-        raw["schema_version"] != _ACTIVE_SCHEMA_VERSION
-        or not _is_sha256(raw["snapshot_sha256"])
-        or raw["target_id"] != TARGET_ID
-        or raw["runtime"] != "docker-compose"
-        or raw["service"] != _FIXED_SERVICE
-        or raw["internal_port"] != _FIXED_PORT
-        or raw["health_path"] != _FIXED_HEALTH_PATH
-        or raw["reset_profile"] != _FIXED_RESET_PROFILE
-    ):
-        raise RuntimeHandoffError("active target metadata is malformed")
-    return raw
-
-
-def _expected_metadata_shape() -> dict[str, type[object]]:
-    return {
-        "schema_version": int,
-        "snapshot_sha256": str,
-        "snapshot_directory": str,
-        "target_id": str,
-        "runtime": str,
-        "service": str,
-        "internal_port": int,
-        "health_path": str,
-        "reset_profile": str,
-    }
-
-
-def _require_fixed_dockerfile(plan: ImportPlan) -> None:
-    dockerfile = next((item for item in plan.files if item.relative_path == _FIXED_DOCKERFILE_PATH), None)
+def _require_fixed_dockerfile(active: ActiveTarget) -> None:
+    dockerfile = next(
+        (item for item in active.plan.files if item.relative_path == _FIXED_DOCKERFILE_PATH),
+        None,
+    )
     if dockerfile is None or dockerfile.sha256 != FIXED_DOCKERFILE_SHA256:
         raise RuntimeHandoffError("approved snapshot Dockerfile is not the fixed runtime contract")
-    if _read_regular_file(dockerfile.source_path, "approved snapshot Dockerfile") != _FIXED_DOCKERFILE_CONTENT:
+    try:
+        dockerfile_content = read_active_file(active, _FIXED_DOCKERFILE_PATH)
+    except ActiveTargetError as error:
+        raise RuntimeHandoffError("approved snapshot Dockerfile changed") from error
+    if dockerfile_content != _FIXED_DOCKERFILE_CONTENT:
         raise RuntimeHandoffError("approved snapshot Dockerfile changed")
 
 
@@ -413,44 +345,6 @@ def _valid_environment(value: object, owner: str) -> tuple[str, ...]:
 
 def _has_forbidden_environment(environment: tuple[str, ...]) -> bool:
     return any(item.partition("=")[0] in _FORBIDDEN_ENVIRONMENT_NAMES for item in environment)
-
-
-def _require_directory(path: Path, description: str) -> Path:
-    try:
-        _validate_existing_parent_chain(path)
-    except TargetImportError as error:
-        raise RuntimeHandoffError(f"{description} is unsafe") from error
-    try:
-        path_stat = os.lstat(path)
-    except OSError as error:
-        raise RuntimeHandoffError(f"{description} is unavailable") from error
-    if stat.S_ISLNK(path_stat.st_mode) or not stat.S_ISDIR(path_stat.st_mode):
-        raise RuntimeHandoffError(f"{description} is unsafe")
-    return path
-
-
-def _read_regular_file(path: Path, description: str) -> bytes:
-    try:
-        path_stat = os.lstat(path)
-    except OSError as error:
-        raise RuntimeHandoffError(f"{description} is unavailable") from error
-    if stat.S_ISLNK(path_stat.st_mode) or not stat.S_ISREG(path_stat.st_mode):
-        raise RuntimeHandoffError(f"{description} is unsafe")
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(path, flags)
-    except OSError as error:
-        raise RuntimeHandoffError(f"{description} cannot be read safely") from error
-    try:
-        current_stat = os.fstat(descriptor)
-        if not stat.S_ISREG(current_stat.st_mode) or (current_stat.st_dev, current_stat.st_ino) != (path_stat.st_dev, path_stat.st_ino):
-            raise RuntimeHandoffError(f"{description} changed during read")
-        content = bytearray()
-        while chunk := os.read(descriptor, 64 * 1024):
-            content.extend(chunk)
-        return bytes(content)
-    finally:
-        os.close(descriptor)
 
 
 def _probe_loopback_health(

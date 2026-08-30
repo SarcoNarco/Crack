@@ -13,3 +13,4 @@ frontend/dist/
 frontend/coverage/
 frontend/*.tsbuildinfo
 /targets/registry/
+/targets/architecture-output/
