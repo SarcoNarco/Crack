@@ -85,6 +85,24 @@ h3 { margin-bottom: .7rem; font-size: clamp(1.05rem, 2vw, 1.5rem); }
 .stage-node.is-failed .state-label { color: #ffbdc0; border-color: var(--red-dark); }
 .stage-node.is-blocked button { opacity: .56; background: #0d0f12; }
 
+.architecture-section { min-width: 0; }
+.architecture-layout { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(250px, .65fr); gap: 1rem; align-items: stretch; }
+.architecture-map { display: block; width: 100%; min-height: 360px; border: 1px solid var(--line); background: radial-gradient(circle at 50% 50%, rgba(255,140,59,.06), transparent 48%), #0c0e11; }
+.architecture-edge { stroke: #40464f; stroke-width: .45; vector-effect: non-scaling-stroke; }
+.architecture-edge.is-related { stroke: var(--orange); stroke-width: .8; }
+.architecture-node rect { fill: #161a20; stroke: #59616d; stroke-width: .35; vector-effect: non-scaling-stroke; }
+.architecture-node.is-related rect { fill: #35251b; stroke: var(--orange); stroke-width: .65; }
+.architecture-node text { fill: #e6e9ed; font: 700 2.05px var(--display); }
+.architecture-node .architecture-layer { fill: #9ca4ae; font: 700 1.35px var(--mono); letter-spacing: .12px; text-transform: uppercase; }
+.architecture-context { min-width: 0; padding: 1.15rem; border: 1px solid var(--line); background: var(--panel); }
+.architecture-context h3 { margin: .5rem 0 1rem; font-size: 1.05rem; }
+.architecture-context p:last-child { color: var(--muted); font-size: .82rem; line-height: 1.55; }
+.architecture-context dl { margin: 0; }
+.architecture-context dl > div { padding: .7rem 0; border-top: 1px solid var(--line); }
+.architecture-context dt { margin-bottom: .2rem; color: var(--muted); font: 800 .64rem var(--mono); letter-spacing: .07em; text-transform: uppercase; }
+.architecture-context dd { margin: 0; font-size: .82rem; line-height: 1.5; }
+.architecture-note { margin: .8rem 0 0; padding-left: .9rem; border-left: 2px solid var(--orange); color: var(--muted); font-size: .78rem; line-height: 1.5; }
+
 .primary-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(340px, .7fr); gap: 1.4rem; }
 .story-section, .explain-panel { min-width: 0; }
 .authorization-story > ol { display: grid; gap: .55rem; margin: 0; padding: 0; list-style: none; }
@@ -182,6 +200,7 @@ footer strong { color: #d5d8dd; }
   .stage-node + .stage-node button { border-left: 1px solid var(--line); }
   .stage-node:not(:last-child)::after { display: none; }
   .primary-grid { grid-template-columns: 1fr; }
+  .architecture-layout { grid-template-columns: 1fr; }
   .lane-checklist { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .consensus-gate { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .gate-core, .gate-output { grid-column: span 1; }
@@ -199,6 +218,7 @@ footer strong { color: #d5d8dd; }
   .completion-count, .session-id { max-width: 100%; text-align: left; }
   .stage-graph { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stage-node button { min-height: 134px; }
+  .architecture-map { min-height: 310px; }
   .lane-grid { grid-template-columns: 1fr; }
   .consensus-gate { grid-template-columns: 1fr; }
   .gate-core, .gate-output { grid-column: auto; }

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { liveTransport, type ConsoleTransport } from './api'
+import { ArchitectureMap } from './ArchitectureMap'
 import { previewEvents } from './fixtures'
 import {
   consoleReducer,
@@ -326,6 +327,8 @@ export default function App({ preview, initialEvents, transport = liveTransport 
           {derived.sequenceGap && <p className="inline-error" role="alert">The event stream contains a sequence gap. Presentation is incomplete.</p>}
           {consoleState.streamError && <p className="inline-error" role="alert">{consoleState.streamError}</p>}
         </section>
+
+        <ArchitectureMap events={consoleState.events} />
 
         <div className="primary-grid">
           <section className="story-section" aria-labelledby="story-heading">

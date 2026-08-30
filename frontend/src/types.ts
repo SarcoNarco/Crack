@@ -8,10 +8,32 @@ export type StageKey =
   | 'consensus'
   | 'report'
 
+export const PRESENTATION_EVENT_TYPES = [
+  'session.started',
+  'preflight.started', 'preflight.completed',
+  'mapper.activated', 'mapper.completed',
+  'identity_reset.started', 'identity_reset.completed',
+  'identity.activated', 'identity.student_b_discovery', 'identity.student_a_retrieval',
+  'hypothesis.created', 'identity.completed',
+  'verifier_a.activated', 'verifier_a.reset_completed', 'verifier_a.plan_validated',
+  'verifier_a.call_recorded', 'verifier_a.check_completed', 'verifier_a.completed',
+  'verifier_b.activated', 'verifier_b.reset_completed', 'verifier_b.plan_validated',
+  'verifier_b.call_recorded', 'verifier_b.check_completed', 'verifier_b.completed',
+  'consensus.started', 'consensus.completed', 'finding.recorded',
+  'report.started', 'report.generated',
+  'session.completed', 'session.failed',
+] as const
+
+export type PresentationEventType = typeof PRESENTATION_EVENT_TYPES[number]
+
+export function isPresentationEventType(value: unknown): value is PresentationEventType {
+  return typeof value === 'string' && (PRESENTATION_EVENT_TYPES as readonly string[]).includes(value)
+}
+
 export interface PresentationEvent {
   session_id: string
   sequence: number
-  type: string
+  type: PresentationEventType
   timestamp: string
   stage: StageKey | 'session'
   logical_role: string | null

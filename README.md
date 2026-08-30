@@ -129,6 +129,14 @@ The first command prints deterministic JSON. `--write` additionally atomically w
 
 This sprint does not execute Docker or Compose, run a target, call a provider, use credentials, contact a network service, invoke the scope controller, coordinator, agents, or ledger, write target or registry state, add event streaming, or add animation. It is not a generic repository mapper. Sprint 19 must be separately authorized for any presentation integration, streaming, animation, runtime handoff, or scope-controller ownership change.
 
+### Event-related target map (Sprint 19)
+
+Sprint 19 adds a frontend-only, static 2D target architecture map to the operations console. It mirrors the six canonical school-portal node IDs, labels, types, layers, coordinates, and nine edges from Sprint 18 in a fixed TypeScript graph. It does not read target files, registry state, architecture output, or an active runtime snapshot.
+
+The existing validated presentation-event stream is the only map state source. The latest unique ordered event can relate to zero or more canonical components: mapper events relate to API structure; identity events relate to role authentication, submissions, and grade lifecycle; reset events relate to persistence; and verifier call events map only safe resolved `GET` route shapes. Coordinator, consensus, report, and session events can honestly remain outside the target map. The map never displays raw request bodies, paths, prompts, model output, source content, tokens, or private prose.
+
+This highlighting is a presentation relationship, not a physical-process location, active imported-runtime binding, attack effect, or proof of attack activity. It has no timers, animation, transitions, fake progress, provider calls, Docker activity, target execution, or ledger writes. Preview and reconnect replay use only recorded fixture events and deterministically show one current sequential verifier role. Sprint 20 may separately consider motion or attack effects; Sprint 21 owns active imported-runtime binding and broader integration.
+
 ### Provider-free UI preview
 
 This preview uses committed fixture events. It makes no provider calls and writes no ledger evidence.
@@ -208,7 +216,7 @@ git diff --check
 ```
 
 - Python: **246 passed, 1 warning**
-- Frontend: **19 tests passed**; TypeScript check and production build: passed
+- Frontend: **32 tests passed**; TypeScript check and production build: passed
 - Docker Compose configuration: passed
 
 ## Repository guide

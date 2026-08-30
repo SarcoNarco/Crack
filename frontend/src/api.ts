@@ -1,4 +1,4 @@
-import type { PresentationEvent, RunStatus } from './types'
+import { isPresentationEventType, type PresentationEvent, type RunStatus } from './types'
 
 export interface ConsoleTransport {
   start(): Promise<RunStatus>
@@ -10,19 +10,19 @@ export interface ConsoleTransport {
   ): () => void
 }
 
-function isEvent(value: unknown): value is PresentationEvent {
+export function isPresentationEvent(value: unknown): value is PresentationEvent {
   if (typeof value !== 'object' || value === null) return false
   const candidate = value as Record<string, unknown>
   return (
     typeof candidate.session_id === 'string' &&
     Number.isInteger(candidate.sequence) &&
-    typeof candidate.type === 'string' &&
+    isPresentationEventType(candidate.type) &&
     typeof candidate.timestamp === 'string' &&
     typeof candidate.stage === 'string' &&
     typeof candidate.state === 'string' &&
     typeof candidate.headline === 'string' &&
     typeof candidate.explanation === 'string' &&
-    typeof candidate.metadata === 'object'
+    typeof candidate.metadata === 'object' && candidate.metadata !== null && !Array.isArray(candidate.metadata)
   )
 }
 
@@ -49,7 +49,7 @@ export const liveTransport: ConsoleTransport = {
     source.onmessage = (message) => {
       try {
         const event: unknown = JSON.parse(message.data)
-        if (!isEvent(event)) throw new Error('invalid event schema')
+        if (!isPresentationEvent(event)) throw new Error('invalid event schema')
         onEvent(event)
         if (event.type === 'session.completed' || event.type === 'session.failed') source.close()
       } catch {

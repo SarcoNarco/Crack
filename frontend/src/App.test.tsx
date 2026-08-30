@@ -126,7 +126,7 @@ describe('live operations console', () => {
     const start = vi.fn<ConsoleTransport['start']>()
     const observe = vi.fn<ConsoleTransport['observe']>().mockResolvedValue(status)
     const subscribe = vi.fn<ConsoleTransport['subscribe']>((_status, onEvent) => {
-      for (const event of events) onEvent(event)
+      for (const event of events) onEvent(event as PresentationEvent)
       return () => undefined
     })
     window.history.replaceState({}, '', `?session=${events[0].session_id}`)
@@ -172,7 +172,7 @@ describe('live operations console', () => {
     const observe = vi.fn<ConsoleTransport['observe']>().mockResolvedValue(status)
     const close = vi.fn()
     const subscribe = vi.fn<ConsoleTransport['subscribe']>((_status, onEvent) => {
-      for (const event of events) onEvent(event)
+      for (const event of events) onEvent(event as PresentationEvent)
       return close
     })
     window.history.replaceState({}, '', `?session=${events[0].session_id}`)
