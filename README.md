@@ -137,6 +137,12 @@ The existing validated presentation-event stream is the only map state source. T
 
 This highlighting is a presentation relationship, not a physical-process location, active imported-runtime binding, attack effect, or proof of attack activity. It has no timers, animation, transitions, fake progress, provider calls, Docker activity, target execution, or ledger writes. Preview and reconnect replay use only recorded fixture events and deterministically show one current sequential verifier role. Sprint 20 may separately consider motion or attack effects; Sprint 21 owns active imported-runtime binding and broader integration.
 
+### Finite event-tied tool markers (Sprint 20)
+
+Sprint 20 adds one restrained, finite presentation marker to the existing static map. An active mapper event can show a scan, active identity events a probe, an active safe Verifier A call a pickaxe, and an active safe Verifier B call a beam; coordinator, consensus, report, non-active, and unsafe-route events remain static actor markers. The pure, exhaustive event-to-effect mapping reuses the latest unique ordered accepted or replayed event and its existing safe component relation. It derives a relation from allowlisted route metadata but never renders raw event metadata, so paths, body hashes, prompts, source, tokens, IDs, and private prose remain absent.
+
+Markers are presentation-only visual language, not a claim that an agent is physically inside a component, that an attack happened, or that it succeeded. Each motion runs once and is keyed by real event sequence; there are no timers, random choices, background loops, fake progress, or parallel verifier markers. State is shown with text and symbols, and reduced-motion users receive the same labels and static iconography with no transform or opacity movement. Verified findings still come only from code-owned consensus. Sprint 20 does not change the event schema, coordinator, target, runtime, scope controller, agents, Docker behavior, provider boundary, registry, or ledger. Sprint 21 remains responsible for any active imported-runtime binding or broader integration.
+
 ### Provider-free UI preview
 
 This preview uses committed fixture events. It makes no provider calls and writes no ledger evidence.

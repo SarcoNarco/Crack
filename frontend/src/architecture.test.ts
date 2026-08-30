@@ -1,16 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import styles from './styles.css?raw'
+import architectureSource from './architecture.ts?raw'
+import mapSource from './ArchitectureMap.tsx?raw'
 import {
   ARCHITECTURE_GRAPH,
   ARCHITECTURE_NODE_IDS,
   assertArchitectureGraph,
+  deriveArchitectureEffect,
   deriveArchitectureMap,
   mapEventToArchitecture,
 } from './architecture'
 import { previewEvents } from './fixtures'
-import type { PresentationEvent } from './types'
+import { PRESENTATION_EVENT_TYPES, type PresentationEvent } from './types'
 
-describe('Sprint 19 static architecture map', () => {
+describe('Sprint 20 event-tied architecture markers', () => {
   it('uses the exact canonical Sprint 18 node and edge structure', () => {
     expect(ARCHITECTURE_GRAPH.nodes.map((node) => node.id)).toEqual(ARCHITECTURE_NODE_IDS)
     expect(ARCHITECTURE_GRAPH.edges).toHaveLength(9)
@@ -86,17 +89,75 @@ describe('Sprint 19 static architecture map', () => {
     expect(deriveArchitectureMap([verifierA, verifierB]).relation?.actor).toBe('Verifier B (sequential)')
   })
 
-  it('uses only safe static labels and map selectors have no motion declarations', () => {
+  it('uses only safe static labels and finite presentation-only motion selectors', () => {
     expect(ARCHITECTURE_GRAPH.nodes.map((node) => node.label)).toEqual([
       'Browser portal', 'FastAPI API', 'Grade lifecycle', 'Role and authentication', 'SQLite persistence', 'Submissions',
     ])
-    const mapStyles = styles.slice(styles.indexOf('.architecture-section'), styles.indexOf('.primary-grid'))
-    expect(mapStyles).not.toMatch(/@keyframes|animation|transition/)
+    expect(styles).toMatch(/@keyframes architecture-scan/)
+    expect(styles).toMatch(/@keyframes architecture-probe/)
+    expect(styles).toMatch(/@keyframes architecture-pickaxe/)
+    expect(styles).toMatch(/@keyframes architecture-beam/)
+    expect(styles).not.toMatch(/animation:[^;}]*infinite/)
+    expect(styles).toMatch(/\.architecture-effect, \.architecture-effect \* \{ animation: none !important; transform: none !important; opacity: 1 !important;/)
+    expect(styles).toMatch(/@media \(forced-colors: active\)/)
+    expect(styles).toMatch(/CanvasText/)
+    expect(styles).toMatch(/Highlight/)
   })
 
-  it('keeps event mapping exhaustive at compile-time and runtime for every fixture type', () => {
-    const eventTypes = new Set(previewEvents('success').map((event) => event.type))
-    expect(eventTypes.size).toBeGreaterThan(20)
-    for (const event of previewEvents('success') as PresentationEvent[]) expect(mapEventToArchitecture(event)).toBeDefined()
+  it('keeps relation and effect mapping exhaustive for every accepted event type', () => {
+    const events = [...previewEvents('success'), ...previewEvents('failure')] as PresentationEvent[]
+    expect(new Set(events.map((event) => event.type))).toEqual(new Set(PRESENTATION_EVENT_TYPES))
+    for (const event of events) {
+      const relation = mapEventToArchitecture(event)
+      const effect = deriveArchitectureEffect(event, relation)
+      expect(effect.key).toBe(`architecture-effect-${event.sequence}`)
+      expect(effect.label).toBeTruthy()
+    }
+  })
+
+  it('uses one latest unique event effect with deterministic sequence keys', () => {
+    const event = previewEvents('success').find((item) => item.type === 'verifier_a.call_recorded')!
+    const duplicated = deriveArchitectureMap([event, event])
+    const once = deriveArchitectureMap([event])
+    const duplicateEffect = deriveArchitectureEffect(duplicated.event!, duplicated.relation!)
+    const onceEffect = deriveArchitectureEffect(once.event!, once.relation!)
+    expect(duplicateEffect).toEqual(onceEffect)
+    const newer = { ...event, sequence: event.sequence + 100 }
+    const newerMap = deriveArchitectureMap([newer])
+    expect(deriveArchitectureEffect(newerMap.event!, newerMap.relation!).key).not.toBe(onceEffect.key)
+    expect(duplicateEffect.kind).toBe('pickaxe')
+  })
+
+  it('allows tool effects only for active safe events and active verifier calls', () => {
+    const events = previewEvents('success')
+    const mapperActive = events.find((item) => item.type === 'mapper.activated')!
+    expect(deriveArchitectureEffect(mapperActive, mapEventToArchitecture(mapperActive)).kind).toBe('scan')
+    const mapperCompleted = events.find((item) => item.type === 'mapper.completed')!
+    expect(deriveArchitectureEffect(mapperCompleted, mapEventToArchitecture(mapperCompleted))).toMatchObject({ kind: 'static', nodeId: null })
+    const identityActive = events.find((item) => item.type === 'identity.student_b_discovery')!
+    const failedIdentity = { ...identityActive, state: 'failed' as const }
+    expect(deriveArchitectureEffect(failedIdentity, mapEventToArchitecture(failedIdentity))).toMatchObject({ kind: 'static', nodeId: null })
+
+    for (const type of [
+      'verifier_a.activated', 'verifier_a.plan_validated', 'verifier_a.reset_completed', 'verifier_a.check_completed', 'verifier_a.completed',
+      'verifier_b.activated', 'verifier_b.plan_validated', 'verifier_b.reset_completed', 'verifier_b.check_completed', 'verifier_b.completed',
+    ] as const) {
+      const event = events.find((item) => item.type === type)!
+      expect(deriveArchitectureEffect(event, mapEventToArchitecture(event))).toMatchObject({ kind: 'static', nodeId: null })
+    }
+
+    const safeCall = events.find((item) => item.type === 'verifier_a.call_recorded')!
+    expect(deriveArchitectureEffect(safeCall, mapEventToArchitecture(safeCall)).kind).toBe('pickaxe')
+    const safeVerifierBCall = events.find((item) => item.type === 'verifier_b.call_recorded')!
+    expect(deriveArchitectureEffect(safeVerifierBCall, mapEventToArchitecture(safeVerifierBCall)).kind).toBe('beam')
+    const unsafeCall = { ...safeCall, metadata: { ...safeCall.metadata, method: 'POST' } }
+    expect(deriveArchitectureEffect(unsafeCall, mapEventToArchitecture(unsafeCall))).toMatchObject({ kind: 'static', nodeId: null })
+  })
+
+  it('keeps outside-target actors static and prevents timing or random effect sources', () => {
+    const consensus = previewEvents('success').find((event) => event.type === 'consensus.completed')!
+    const relation = mapEventToArchitecture(consensus)
+    expect(deriveArchitectureEffect(consensus, relation)).toMatchObject({ kind: 'static', nodeId: null })
+    expect(`${architectureSource}\n${mapSource}`).not.toMatch(/\b(?:setTimeout|setInterval|requestAnimationFrame|Date|Math\.random)\b/)
   })
 })

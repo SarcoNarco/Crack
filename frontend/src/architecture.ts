@@ -226,6 +226,102 @@ export interface ArchitectureMapState {
   relatedEdgeIds: readonly string[]
 }
 
+export type ArchitectureEffectKind = 'static' | 'scan' | 'probe' | 'pickaxe' | 'beam'
+
+export interface ArchitectureEffect {
+  key: string
+  kind: ArchitectureEffectKind
+  label: string
+  nodeId: ArchitectureNodeId | null
+}
+
+function staticEffect(event: PresentationEvent): ArchitectureEffect {
+  return {
+    key: `architecture-effect-${event.sequence}`,
+    kind: 'static',
+    label: 'Static actor marker',
+    nodeId: null,
+  }
+}
+
+function targetEffect(
+  event: PresentationEvent,
+  relation: ArchitectureRelation,
+  kind: Exclude<ArchitectureEffectKind, 'static'>,
+  label: string,
+  nodeId: ArchitectureNodeId,
+): ArchitectureEffect {
+  if (!relation.nodeIds.includes(nodeId)) return staticEffect(event)
+  return { key: `architecture-effect-${event.sequence}`, kind, label, nodeId }
+}
+
+function verifierTarget(relation: ArchitectureRelation): ArchitectureNodeId | null {
+  if (relation.nodeIds.includes('grade-lifecycle')) return 'grade-lifecycle'
+  if (relation.nodeIds.includes('submissions')) return 'submissions'
+  return null
+}
+
+/**
+ * Presentation-only tool marker for one latest accepted/replayed event.
+ * It never establishes an attack outcome; consensus remains code-owned.
+ */
+export function deriveArchitectureEffect(
+  event: PresentationEvent,
+  relation: ArchitectureRelation,
+): ArchitectureEffect {
+  if (event.state !== 'active') return staticEffect(event)
+  switch (event.type) {
+    case 'session.started':
+    case 'session.completed':
+    case 'session.failed':
+    case 'preflight.started':
+    case 'preflight.completed':
+    case 'identity_reset.started':
+    case 'identity_reset.completed':
+    case 'hypothesis.created':
+    case 'consensus.started':
+    case 'consensus.completed':
+    case 'finding.recorded':
+    case 'report.started':
+    case 'report.generated':
+      return staticEffect(event)
+    case 'mapper.activated':
+    case 'mapper.completed':
+      return targetEffect(event, relation, 'scan', 'Mapper scan', 'fastapi-api')
+    case 'identity.activated':
+    case 'identity.completed':
+      return targetEffect(event, relation, 'probe', 'Identity probe', 'role-authentication')
+    case 'identity.student_b_discovery':
+      return targetEffect(event, relation, 'probe', 'Identity probe', 'submissions')
+    case 'identity.student_a_retrieval':
+      return targetEffect(event, relation, 'probe', 'Identity probe', 'grade-lifecycle')
+    case 'verifier_a.activated':
+    case 'verifier_a.reset_completed':
+    case 'verifier_a.plan_validated':
+    case 'verifier_a.check_completed':
+    case 'verifier_a.completed':
+      return staticEffect(event)
+    case 'verifier_a.call_recorded': {
+      const nodeId = verifierTarget(relation)
+      return nodeId ? targetEffect(event, relation, 'pickaxe', 'Verifier A pickaxe', nodeId) : staticEffect(event)
+    }
+    case 'verifier_b.activated':
+    case 'verifier_b.reset_completed':
+    case 'verifier_b.plan_validated':
+    case 'verifier_b.check_completed':
+    case 'verifier_b.completed':
+      return staticEffect(event)
+    case 'verifier_b.call_recorded': {
+      const nodeId = verifierTarget(relation)
+      return nodeId ? targetEffect(event, relation, 'beam', 'Verifier B beam', nodeId) : staticEffect(event)
+    }
+    default: {
+      const exhaustive: never = event.type
+      return exhaustive
+    }
+  }
+}
+
 export function deriveArchitectureMap(events: readonly PresentationEvent[]): ArchitectureMapState {
   const seenSequences = new Set<number>()
   const ordered = [...events]
