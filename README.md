@@ -10,7 +10,7 @@ The answer is a local-only pipeline where models propose bounded plans, ordinary
 
 ![Crack live operations console replaying a completed contained verification run](docs/assets/crack-operations-console.jpg)
 
-_Real replay of an accepted synthetic run. Screenshot capture made no provider calls and did not modify the ledger._
+_Provider-free replay of committed, accepted synthetic fixture events. Screenshot capture made no provider calls and did not modify the ledger._
 
 ## What this project demonstrates
 
@@ -25,6 +25,8 @@ _Real replay of an accepted synthetic run. Screenshot capture made no provider c
 ## Sprint 14 migration status
 
 The disposable target is now a deterministic school portal with Teacher, Student A, and Student B fixtures. Sprint 14 is validated offline only: no provider-backed or live workflow run is claimed. Historical ledger evidence remains preserved as evidence of its earlier fixture domain and is not a claim about the current portal state.
+
+![Synthetic Northstar school portal teacher grading queue](docs/assets/crack-school-portal.jpg)
 
 ![Seven completed stages in the replayable operations graph](docs/assets/crack-evidence-flow.jpg)
 
@@ -48,6 +50,10 @@ flowchart LR
 ```
 
 Logical roles run as sequential Python operations, not autonomous parallel services. All application access passes through the fixed scope controller.
+
+![Event-related target architecture map for the synthetic school portal](docs/assets/crack-architecture-map.jpg)
+
+The map highlights the canonical component related to the latest validated presentation event. Its finite tool markers are explanatory UI only: they do not claim a physical agent location, parallel execution, or a security verdict.
 
 ## Evidence report
 
