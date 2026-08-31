@@ -44,7 +44,10 @@ EVENT_TYPES = (
 
 _METADATA_FIELDS: dict[str, frozenset[str]] = {
     "session.started": frozenset({"mode"}),
-    "preflight.completed": frozenset({"role_bindings"}),
+    "preflight.completed": frozenset({
+        "role_bindings", "target_id", "snapshot_sha256", "runtime_status",
+        "architecture_provenance",
+    }),
     "mapper.completed": frozenset({"route_count"}),
     "identity_reset.completed": frozenset({"reset_id", "state_hash"}),
     "identity.student_b_discovery": frozenset({"status_code", "submission_id", "student"}),
@@ -121,7 +124,29 @@ def _safe_metadata(event_type: str, metadata: Mapping[str, object]) -> dict[str,
             cleaned[key] = list(value)
         else:
             raise ValueError(f"{event_type} metadata must contain bounded scalar values")
+    if event_type == "preflight.completed":
+        _validate_preflight_metadata(cleaned)
     return cleaned
+
+
+def _validate_preflight_metadata(metadata: Mapping[str, object]) -> None:
+    """Keep legacy preflight events valid while requiring all-or-nothing binding facts."""
+    binding_keys = {
+        "target_id", "snapshot_sha256", "runtime_status", "architecture_provenance",
+    }
+    keys = set(metadata)
+    if keys == {"role_bindings"}:
+        return
+    if keys != {"role_bindings", *binding_keys}:
+        raise ValueError("preflight.completed metadata has an incomplete runtime binding")
+    if (
+        metadata.get("target_id") != "crack-school-portal"
+        or not isinstance(metadata.get("snapshot_sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", metadata["snapshot_sha256"]) is None
+        or metadata.get("runtime_status") != "running"
+        or metadata.get("architecture_provenance") != "source-derived approved snapshot"
+    ):
+        raise ValueError("preflight.completed metadata has an invalid runtime binding")
 
 
 class PresentationEvent(BaseModel):

@@ -98,6 +98,39 @@ function TechnicalDetails({ event }: { event: PresentationEvent }) {
   )
 }
 
+function TargetBinding({ event, preview }: { event: PresentationEvent | undefined; preview: boolean }) {
+  const metadata = event?.metadata ?? {}
+  const bindingFields = [
+    'role_bindings', 'target_id', 'snapshot_sha256', 'runtime_status', 'architecture_provenance',
+  ]
+  const bound = !preview
+    && event?.type === 'preflight.completed'
+    && event.stage === 'preflight'
+    && event.state === 'completed'
+    && event.logical_role === 'coordinator'
+    && Object.keys(metadata).length === bindingFields.length
+    && bindingFields.every((field) => Object.prototype.hasOwnProperty.call(metadata, field))
+    && Array.isArray(metadata.role_bindings)
+    && metadata.role_bindings.every((value) => typeof value === 'string')
+    && metadata.target_id === 'crack-school-portal'
+    && typeof metadata.snapshot_sha256 === 'string'
+    && /^[0-9a-f]{64}$/.test(metadata.snapshot_sha256)
+    && metadata.runtime_status === 'running'
+    && metadata.architecture_provenance === 'source-derived approved snapshot'
+  return (
+    <section className="target-binding" aria-labelledby="target-binding-heading">
+      <div><p className="kicker">Approved target binding</p><h2 id="target-binding-heading">Managed runtime</h2></div>
+      {bound ? <dl>
+        <div><dt>Target</dt><dd>{text(metadata.target_id)}</dd></div>
+        <div><dt>Registration hash</dt><dd className="mono wrap">{text(metadata.snapshot_sha256)}</dd></div>
+        <div><dt>Runtime</dt><dd><span className="architecture-state state-completed">{text(metadata.runtime_status)}</span></dd></div>
+        <div><dt>Architecture provenance</dt><dd>{text(metadata.architecture_provenance)}</dd></div>
+      </dl> : <p className="empty-state">No attested runtime binding is available for this console state.</p>}
+      <p className="target-binding-note">{preview ? 'Preview data is committed synthetic fixture data and remains unbound.' : 'Only an attested runtime preflight may show target identity, approved hash, state, and provenance.'}</p>
+    </section>
+  )
+}
+
 function StageGraph({
   events,
   stages,
@@ -294,6 +327,7 @@ export default function App({ preview, initialEvents, transport = liveTransport 
     : null
   const verifierRunId = derived.terminal?.metadata.verifier_run_id
   const latestAnnouncement = consoleState.events.at(-1)?.headline ?? 'Console ready'
+  const preflight = latest(consoleState.events, 'preflight.completed')
 
   return (
     <div className="app-shell">
@@ -320,6 +354,8 @@ export default function App({ preview, initialEvents, transport = liveTransport 
             {startError && <p className="inline-error" role="alert">{startError}</p>}
           </div>
         </section>
+
+        <TargetBinding event={preflight} preview={Boolean(previewKind)} />
 
         <section className="operations-section" aria-labelledby="operations-heading">
           <div className="section-heading"><div><p className="kicker">Received state transitions</p><h2 id="operations-heading">Live operation graph</h2></div><span className="completion-count">{Object.values(derived.stages).filter((state) => state === 'completed').length} / {STAGES.length} stages complete</span></div>

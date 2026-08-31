@@ -251,6 +251,35 @@ def test_school_identity_events_accept_only_the_new_safe_metadata_shape(tmp_path
         )
 
 
+def test_preflight_runtime_binding_metadata_is_all_or_nothing(tmp_path: Path) -> None:
+    session_id = "demo:00000000-0000-4000-8000-000000000012"
+    journal = EventJournal(tmp_path, session_id, create=True)
+    event = journal.publish(
+        event_type="preflight.completed", stage="preflight", state="completed",
+        logical_role="coordinator", headline="Fixed preflight completed",
+        explanation="The approved runtime binding was attested.",
+        metadata={
+            "role_bindings": ["mapper · fake · fixture"],
+            "target_id": "crack-school-portal",
+            "snapshot_sha256": "a" * 64,
+            "runtime_status": "running",
+            "architecture_provenance": "source-derived approved snapshot",
+        },
+    )
+    assert event.metadata["runtime_status"] == "running"
+
+    with pytest.raises(ValueError, match="incomplete runtime binding"):
+        journal.publish(
+            event_type="preflight.completed", stage="preflight", state="completed",
+            logical_role="coordinator", headline="Fixed preflight completed",
+            explanation="Incomplete metadata must fail closed.",
+            metadata={
+                "role_bindings": ["mapper · fake · fixture"],
+                "target_id": "crack-school-portal",
+            },
+        )
+
+
 def test_session_id_cannot_traverse_output_paths(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="invalid demo session ID"):
         EventJournal(tmp_path, "../../reports/output")

@@ -36,6 +36,18 @@ _REDACT_ASSIGNMENT: Final = re.compile(
     r"\s*(?:=|:)\s*[^\s,;]+"
 )
 _REDACT_BEARER: Final = re.compile(r"(?i)\bbearer\s+[^\s,;]+")
+_STATE_FINGERPRINT: Final = re.compile(r"^[0-9a-f]{16}$")
+_STATE_FINGERPRINT_PROGRAM: Final = (
+    "import hashlib,json,sqlite3;"
+    "c=sqlite3.connect('/workspace/data/demo_app.db');"
+    "q=lambda s:c.execute(s).fetchall();"
+    "v={'people':q('SELECT id,role,token,display_name FROM people ORDER BY id'),"
+    "'classes':q('SELECT id,teacher_id,title FROM classes ORDER BY id'),"
+    "'assignments':q('SELECT id,class_id,title FROM assignments ORDER BY id'),"
+    "'submissions':q('SELECT id,assignment_id,student_id,body FROM submissions ORDER BY id'),"
+    "'grades':q('SELECT id,submission_id,teacher_id,feedback,state FROM grades ORDER BY id')};"
+    "print(hashlib.sha256(json.dumps(v,separators=(',',':'),sort_keys=True).encode()).hexdigest()[:16])"
+)
 
 
 class DockerCommandError(RuntimeError):
@@ -103,6 +115,18 @@ class DockerAdapter:
 
     def seed_disposable_data(self) -> None:
         self._require_success(("exec", CONTAINER_NAME, "python", "-m", "scripts.seed"))
+
+    def seeded_state_fingerprint(self) -> str:
+        """Return only the fixed logical-state digest from the managed container."""
+        result = self._invoke(
+            (_DOCKER, "exec", CONTAINER_NAME, "python", "-c", _STATE_FINGERPRINT_PROGRAM)
+        )
+        if result.returncode != 0:
+            raise DockerCommandError("fixed Docker state fingerprint did not complete")
+        fingerprint = result.stdout.strip()
+        if not _STATE_FINGERPRINT.fullmatch(fingerprint):
+            raise DockerCommandError("fixed Docker state fingerprint was malformed")
+        return fingerprint
 
     def remove_container(self) -> None:
         self._require_success(("container", "rm", "--force", CONTAINER_NAME))

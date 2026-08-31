@@ -143,6 +143,12 @@ Sprint 20 adds one restrained, finite presentation marker to the existing static
 
 Markers are presentation-only visual language, not a claim that an agent is physically inside a component, that an attack happened, or that it succeeded. Each motion runs once and is keyed by real event sequence; there are no timers, random choices, background loops, fake progress, or parallel verifier markers. State is shown with text and symbols, and reduced-motion users receive the same labels and static iconography with no transform or opacity movement. Verified findings still come only from code-owned consensus. Sprint 20 does not change the event schema, coordinator, target, runtime, scope controller, agents, Docker behavior, provider boundary, registry, or ledger. Sprint 21 remains responsible for any active imported-runtime binding or broader integration.
 
+### Managed runtime binding (Sprint 21)
+
+Sprint 21 adds a separate host-local runtime-console mode for exactly one active approved school-portal snapshot and an already-running Sprint 17 managed runtime. The default `coordinator.demo`, root Compose topology, workflow demo, and scope-controller source/reset behavior remain unchanged. The runtime mode injects only three ordinary callables into the existing mapper, identity, and verifier APIs: non-following approved-snapshot source reads, the unchanged fixed loopback endpoint caller, and a managed reset.
+
+Each injected operation revalidates the captured active descriptor and the exact label-bound managed container. Resets re-inspect immediately before the fixed image-owned seed command, health-check afterwards, and return only a deterministic 16-character logical-state fingerprint derived inside the container; no fixture rows or tokens cross the Docker adapter. Runtime/architecture attestation occurs before provider client construction and publishes only target ID, approved registration hash, `running` status, and source-derived provenance. The console displays those facts only after an exact completed preflight event; preview remains committed synthetic fixture data and unbound. Offline Sprint 21 work does not start Docker, run providers, change the ledger, or make a security verdict.
+
 ### Provider-free UI preview
 
 This preview uses committed fixture events. It makes no provider calls and writes no ledger evidence.
@@ -168,6 +174,28 @@ python -m reports.generate --run-id <verifier_run_id>
 ```
 
 Reports are written to ignored `reports/output/`. Generation never changes ledger rows, findings, or verification statuses.
+
+### Imported-runtime console
+
+This is a separate, optional live path; it does not replace the default demo below. Stop the root Compose stack first so only the managed runtime owns loopback port `8100`. After separately registering the exact local school-portal folder and preparing the trusted local image described above, an operator may start the approved hash and fixed host-local coordinator:
+
+```sh
+python -m targets.runtime start --approve-sha256 <exact_snapshot_sha256>
+python -m coordinator.runtime_main
+```
+
+In another terminal, start the frontend and open `http://127.0.0.1:4173/`:
+
+```sh
+cd frontend
+npm run dev
+```
+
+The runtime command never builds or pulls an image. Image labels are local operator assertions, not cryptographic proof of image contents. Starting a console workflow remains provider-backed and requires the same ignored local provider environment plus explicit live-run approval. Stop the coordinator and frontend with `Ctrl-C`, then stop only the fixed label-matched runtime:
+
+```sh
+python -m targets.runtime stop
+```
 
 ## Live contained demo
 
@@ -221,8 +249,8 @@ docker compose config
 git diff --check
 ```
 
-- Python: **246 passed, 1 warning**
-- Frontend: **32 tests passed**; TypeScript check and production build: passed
+- Python: **263 passed, 1 warning**
+- Frontend: **39 tests passed**; TypeScript check and production build: passed
 - Docker Compose configuration: passed
 
 ## Repository guide

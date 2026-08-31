@@ -89,6 +89,7 @@ class FakeDocker:
         self.current_network: dict[str, object] | None = None
         self.calls: list[str] = []
         self.fail_run = False
+        self.state_fingerprint = "b" * 16
 
     def image(self) -> dict[str, object] | None:
         self.calls.append("image")
@@ -116,6 +117,10 @@ class FakeDocker:
 
     def seed_disposable_data(self) -> None:
         self.calls.append("seed")
+
+    def seeded_state_fingerprint(self) -> str:
+        self.calls.append("fingerprint")
+        return self.state_fingerprint
 
     def remove_container(self) -> None:
         self.calls.append("remove-container")
@@ -146,6 +151,76 @@ def test_start_uses_only_matching_preexisting_offline_image_and_fixed_resources(
     assert fake.calls == ["image", "container", "network", "create-network", "image", "run", "container", "seed"]
     assert fake.current_network and fake.current_network["Internal"] is True
     assert fake.current_container and fake.current_container["Config"]["Labels"] == fake.labels
+
+
+def test_require_running_rechecks_managed_container_and_health(tmp_path: Path) -> None:
+    service, fake, approved_hash, _ = _registered_service(tmp_path)
+    fake.current_network = _network(fake.labels)
+    fake.current_container = _container(fake.labels)
+
+    result = service.require_running()
+
+    assert result == runtime_module.RuntimeStatus("running", approved_hash, "crack-school-portal")
+    assert fake.calls == ["container", "network", "image", "container", "network", "image"]
+
+
+def test_reset_running_runtime_returns_adapter_derived_logical_fingerprint(tmp_path: Path) -> None:
+    service, fake, approved_hash, _ = _registered_service(tmp_path)
+    fake.current_network = _network(fake.labels)
+    fake.current_container = _container(fake.labels)
+
+    result = service.reset_disposable_state()
+
+    assert result == runtime_module.RuntimeStatus("running", approved_hash, "crack-school-portal", "b" * 16)
+    assert fake.calls == [
+        "container", "network", "image", "container", "network", "image", "seed",
+        "fingerprint", "container", "network", "image",
+    ]
+
+
+def test_reset_rejects_malformed_adapter_fingerprint(tmp_path: Path) -> None:
+    service, fake, _approved_hash, _ = _registered_service(tmp_path)
+    fake.current_network = _network(fake.labels)
+    fake.current_container = _container(fake.labels)
+    fake.state_fingerprint = "bad"
+
+    with pytest.raises(RuntimeHandoffError, match="logical state fingerprint is malformed"):
+        service.reset_disposable_state()
+    assert "remove-container" not in fake.calls and "remove-network" not in fake.calls
+
+
+def test_runtime_binding_rejects_active_metadata_replacement_after_health(tmp_path: Path) -> None:
+    registry_holder: dict[str, Path] = {}
+
+    def replace_active_metadata() -> None:
+        active = registry_holder["registry"] / "active-target.json"
+        replacement = active.with_name(".replacement-active-target.json")
+        replacement.write_bytes(active.read_bytes())
+        replacement.replace(active)
+
+    service, fake, _, registry = _registered_service(tmp_path, health_probe=replace_active_metadata)
+    registry_holder["registry"] = registry
+    fake.current_network = _network(fake.labels)
+    fake.current_container = _container(fake.labels)
+
+    with pytest.raises(RuntimeHandoffError, match="active approved target changed"):
+        service.require_running()
+
+
+def test_reset_reinspects_exact_container_immediately_before_seed(tmp_path: Path) -> None:
+    service, fake, _, _ = _registered_service(tmp_path)
+    fake.current_network = _network(fake.labels)
+    fake.current_container = _container(fake.labels)
+
+    def replace_container_after_health() -> None:
+        assert fake.current_container is not None
+        fake.current_container = _container({**fake.labels, "io.crack.snapshot-sha256": "c" * 64})
+
+    service._health_probe = replace_container_after_health
+
+    with pytest.raises(RuntimeHandoffError, match="different approved hash"):
+        service.reset_disposable_state()
+    assert "seed" not in fake.calls
 
 
 def test_start_rejects_approval_or_image_hash_mismatch(tmp_path: Path) -> None:
@@ -599,6 +674,31 @@ def test_docker_adapter_timeout_and_output_redaction_are_safe(monkeypatch: pytes
         DockerAdapter().run_container(IMAGE_ID, "a" * 64, FIXED_DOCKERFILE_SHA256)
 
     assert "test-value" not in _safe_output("API_KEY=test-value")
+
+
+def test_docker_adapter_fingerprint_uses_fixed_shell_free_program_and_validates_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+
+    def valid(arguments: tuple[str, ...], **kwargs: object) -> SimpleNamespace:
+        calls.append((arguments, kwargs))
+        return SimpleNamespace(returncode=0, stdout="b" * 16 + "\n", stderr="")
+
+    monkeypatch.setattr("targets.docker_adapter.subprocess.run", valid)
+    assert DockerAdapter().seeded_state_fingerprint() == "b" * 16
+    argv, kwargs = calls[0]
+    assert argv[:5] == ("docker", "exec", CONTAINER_NAME, "python", "-c")
+    assert len(argv) == 6 and "sqlite3.connect('/workspace/data/demo_app.db')" in argv[-1]
+    assert kwargs["shell"] is False and set(kwargs["env"]) == {"PATH", "LANG", "LC_ALL"}
+
+    def malformed(*_: object, **__: object) -> SimpleNamespace:
+        return SimpleNamespace(returncode=0, stdout="unexpected-output-must-not-escape", stderr="")
+
+    monkeypatch.setattr("targets.docker_adapter.subprocess.run", malformed)
+    with pytest.raises(DockerCommandError, match="fingerprint was malformed") as error:
+        DockerAdapter().seeded_state_fingerprint()
+    assert "must-not-escape" not in str(error.value)
 
 
 def test_docker_adapter_only_accepts_fixed_resource_not_found(

@@ -16,6 +16,56 @@ describe('live operations console', () => {
     expect(screen.getByRole('heading', { name: 'Cross-student detail read verified.' })).toBeInTheDocument()
   })
 
+  it('shows only safe approved target binding metadata in the synthetic preview', () => {
+    render(<App preview="success" />)
+    expect(screen.getByRole('heading', { name: 'Managed runtime' })).toBeInTheDocument()
+    expect(screen.getByText('No attested runtime binding is available for this console state.')).toBeInTheDocument()
+    expect(screen.getByText(/Preview data is committed synthetic fixture data/)).toBeInTheDocument()
+    expect(screen.queryByText('crack-school-portal')).not.toBeInTheDocument()
+    expect(screen.queryByText(/filesystem path|database path|token/i)).not.toBeInTheDocument()
+  })
+
+  it('shows attested runtime facts only from a non-preview preflight event', () => {
+    const events = previewEvents('success').map((event) => event.type === 'preflight.completed'
+      ? {
+          ...event,
+          metadata: {
+            ...event.metadata,
+            target_id: 'crack-school-portal',
+            snapshot_sha256: 'a'.repeat(64),
+            runtime_status: 'running',
+            architecture_provenance: 'source-derived approved snapshot',
+          },
+        }
+      : event) as PresentationEvent[]
+    render(<App preview={null} initialEvents={events} />)
+    const section = screen.getByRole('heading', { name: 'Managed runtime' }).closest('section')
+    expect(section).not.toBeNull()
+    expect(within(section!).getByText('crack-school-portal')).toBeInTheDocument()
+    expect(within(section!).getByText('a'.repeat(64))).toBeInTheDocument()
+    expect(within(section!).queryByText(/synthetic fixture data and remains unbound/i)).not.toBeInTheDocument()
+  })
+
+  it('rejects incomplete or non-terminal runtime presentation events', () => {
+    const events = previewEvents('success').map((event) => event.type === 'preflight.completed'
+      ? {
+          ...event,
+          state: 'active' as const,
+          metadata: {
+            ...event.metadata,
+            target_id: 'crack-school-portal',
+            snapshot_sha256: 'a'.repeat(64),
+            runtime_status: 'running',
+            architecture_provenance: 'source-derived approved snapshot',
+            unexpected: 'field',
+          },
+        }
+      : event) as PresentationEvent[]
+    render(<App preview={null} initialEvents={events} />)
+    expect(screen.getByText('No attested runtime binding is available for this console state.')).toBeInTheDocument()
+    expect(screen.queryByText('crack-school-portal')).not.toBeInTheDocument()
+  })
+
   it('switches presentation-only simple and technical modes', async () => {
     const user = userEvent.setup()
     render(<App preview="success" />)

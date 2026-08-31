@@ -61,6 +61,7 @@ class RuntimeStatus:
     state: str
     snapshot_sha256: str
     target_id: str
+    state_hash: str | None = None
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,7 @@ class RuntimeService:
                 if existing_network is None:
                     raise RuntimeHandoffError("fixed runtime network is missing")
                 self._health_probe()
+                self._assert_active_unchanged(active)
                 return _status("running", active)
             self._docker.remove_container()
 
@@ -124,6 +126,7 @@ class RuntimeService:
             _validated_container_state(created_container, labels, image)
             self._docker.seed_disposable_data()
             self._health_probe()
+            self._assert_active_unchanged(active)
         except (DockerCommandError, RuntimeHandoffError, OSError, http.client.HTTPException) as error:
             complete = self._rollback(
                 container_attempted=container_attempted,
@@ -137,13 +140,69 @@ class RuntimeService:
                 else "fixed runtime start failed; rollback incomplete"
             )
             raise RuntimeHandoffError(message) from error
-        return _status("started", active)
+        return _status("started", self._load_active_target())
 
     def status(self) -> RuntimeStatus:
         return self._translate_docker_failure(self._status)
 
     def _status(self) -> RuntimeStatus:
         active = self._load_active_target()
+        result = self._status_for_active(active)
+        self._assert_active_unchanged(active)
+        return result
+
+    def require_running(self) -> RuntimeStatus:
+        """Prove the one approved runtime is still running and healthy."""
+        return self._translate_docker_failure(self._require_running)
+
+    def _require_running(self) -> RuntimeStatus:
+        active = self._load_active_target()
+        result = self._status_for_active(active)
+        if result.state != "running":
+            raise RuntimeHandoffError("fixed managed runtime is not running")
+        self._health_probe()
+        self._assert_active_unchanged(active)
+        refreshed = self._load_active_target()
+        result = self._status_for_active(refreshed)
+        if result.state != "running":
+            raise RuntimeHandoffError("fixed managed runtime is not running")
+        self._assert_active_unchanged(refreshed)
+        return result
+
+    def reset_disposable_state(self) -> RuntimeStatus:
+        """Reset only the already-running, approved disposable runtime."""
+        return self._translate_docker_failure(self._reset_disposable_state)
+
+    def _reset_disposable_state(self) -> RuntimeStatus:
+        active = self._load_active_target()
+        initial = self._status_for_active(active)
+        if initial.state != "running":
+            raise RuntimeHandoffError("fixed managed runtime is not running")
+        self._health_probe()
+        self._assert_active_unchanged(active)
+        before_seed = self._status_for_active(active)
+        if before_seed.state != "running":
+            raise RuntimeHandoffError("fixed managed runtime is not running")
+        self._assert_active_unchanged(active)
+        self._docker.seed_disposable_data()
+        self._health_probe()
+        state_hash = self._docker.seeded_state_fingerprint()
+        if not isinstance(state_hash, str) or re.fullmatch(r"[0-9a-f]{16}", state_hash) is None:
+            raise RuntimeHandoffError("fixed runtime logical state fingerprint is malformed")
+        self._assert_active_unchanged(active)
+        refreshed = self._load_active_target()
+        result = self._status_for_active(refreshed)
+        if result.state != "running":
+            raise RuntimeHandoffError("fixed managed runtime is not running")
+        self._assert_active_unchanged(refreshed)
+        return RuntimeStatus(
+            state=result.state,
+            snapshot_sha256=result.snapshot_sha256,
+            target_id=result.target_id,
+            state_hash=state_hash,
+        )
+
+    def _status_for_active(self, active: ActiveTarget) -> RuntimeStatus:
         container = self._docker.container()
         network = self._docker.network()
         labels = required_labels(active.plan.snapshot_sha256, FIXED_DOCKERFILE_SHA256)
@@ -155,6 +214,11 @@ class RuntimeService:
             raise RuntimeHandoffError("fixed runtime network is missing")
         image = _validated_image(self._docker.image(), labels)
         return _status(_validated_container_state(container, labels, image), active)
+
+    def _assert_active_unchanged(self, active: ActiveTarget) -> None:
+        refreshed = self._load_active_target()
+        if refreshed != active:
+            raise RuntimeHandoffError("active approved target changed during runtime validation")
 
     def stop(self) -> RuntimeStatus:
         return self._translate_docker_failure(self._stop)
@@ -171,7 +235,8 @@ class RuntimeService:
         if network is not None:
             _validate_network(network, labels)
             self._docker.remove_network()
-        return _status("stopped", active)
+        self._assert_active_unchanged(active)
+        return _status("stopped", self._load_active_target())
 
     def _rollback(
         self, *, container_attempted: bool, network_attempted: bool, labels: dict[str, str], image: _ImageContract

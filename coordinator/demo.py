@@ -64,6 +64,10 @@ class DemoDependencies:
     view_reader: Callable[[str, Path], object] = read_run
     view_formatter: Callable[[object], str] = format_run
     report_generator: Callable[..., tuple[Path, Path]] = generate
+    preflight_metadata: Callable[[], dict[str, object]] | None = None
+    source_reader: Callable[[str], str] | None = None
+    endpoint_caller: Callable[[str, str, str], dict[str, object]] | None = None
+    verifier_resetter: Callable[[], str] | None = None
 
 
 @dataclass(frozen=True)
@@ -140,7 +144,25 @@ def _write_manifest(path: Path, *, session_id: str, stages: dict[str, str], star
     _atomic_json(path, payload)
 
 
-def _preflight(dependencies: DemoDependencies) -> dict[str, object]:
+def _preflight(dependencies: DemoDependencies) -> tuple[dict[str, object], dict[str, object]]:
+    binding: dict[str, object] = {}
+    if dependencies.preflight_metadata is not None:
+        try:
+            binding = dependencies.preflight_metadata()
+        except Exception as exc:
+            raise DemoError("approved managed runtime binding is unavailable") from exc
+        if (
+            set(binding) != {
+                "target_id", "snapshot_sha256", "runtime_status", "architecture_provenance",
+            }
+            or binding.get("target_id") != "crack-school-portal"
+            or binding.get("runtime_status") != "running"
+            or binding.get("architecture_provenance") != "source-derived approved snapshot"
+            or not isinstance(binding.get("snapshot_sha256"), str)
+            or len(binding["snapshot_sha256"]) != 64
+            or any(character not in "0123456789abcdef" for character in binding["snapshot_sha256"])
+        ):
+            raise DemoError("approved managed runtime binding is mismatched")
     try:
         health = dependencies.health_check()
     except Exception as exc:
@@ -155,7 +177,7 @@ def _preflight(dependencies: DemoDependencies) -> dict[str, object]:
             raise DemoError(f"provider preflight blocked for {role}: {exc}") from exc
         except Exception as exc:
             raise DemoError(f"provider preflight blocked for {role}") from exc
-    return clients
+    return clients, binding
 
 
 def run_demo(*, dependencies: DemoDependencies | None = None, output_root: Path = _OUTPUT_ROOT,
@@ -194,7 +216,7 @@ def run_demo(*, dependencies: DemoDependencies | None = None, output_root: Path 
                 "committed model-role bindings."
             ),
         )
-        clients = _preflight(deps)
+        clients, runtime_binding = _preflight(deps)
         stages["preflight"] = "completed"
         bindings = [
             " · ".join(
@@ -213,7 +235,7 @@ def run_demo(*, dependencies: DemoDependencies | None = None, output_root: Path 
                 "The local app responded and every committed logical role has a configured "
                 "client. No target or provider was supplied by the browser."
             ),
-            metadata={"role_bindings": bindings},
+            metadata={"role_bindings": bindings, **runtime_binding},
         )
 
         failure_stage = "mapper"
@@ -226,7 +248,12 @@ def run_demo(*, dependencies: DemoDependencies | None = None, output_root: Path 
                 "scope controller."
             ),
         )
-        contract = deps.mapper(client=clients["mapper"], output_path=contract_path)
+        mapper_arguments: dict[str, object] = {
+            "client": clients["mapper"], "output_path": contract_path,
+        }
+        if deps.source_reader is not None:
+            mapper_arguments["source_reader"] = deps.source_reader
+        contract = deps.mapper(**mapper_arguments)
         route_count = len(contract.routes)
         stages["mapper"] = "completed"
         publish(
@@ -274,6 +301,8 @@ def run_demo(*, dependencies: DemoDependencies | None = None, output_root: Path 
         identity_arguments: dict[str, object] = {
             "client": clients["identity"], "contract_path": contract_path,
         }
+        if deps.endpoint_caller is not None:
+            identity_arguments["endpoint_caller"] = deps.endpoint_caller
         if progress is not None:
             identity_arguments["progress"] = publish
         identity = deps.identity(**identity_arguments)
@@ -297,6 +326,10 @@ def run_demo(*, dependencies: DemoDependencies | None = None, output_root: Path 
         verifier_arguments: dict[str, object] = {
             "client_a": clients["verifier_a"], "client_b": clients["verifier_b"],
         }
+        if deps.endpoint_caller is not None:
+            verifier_arguments["endpoint_caller"] = deps.endpoint_caller
+        if deps.verifier_resetter is not None:
+            verifier_arguments["resetter"] = deps.verifier_resetter
         if progress is not None:
             verifier_arguments["progress"] = publish
         verifier_result = deps.verifier(hypothesis_id, **verifier_arguments)

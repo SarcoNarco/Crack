@@ -105,6 +105,87 @@ def test_preflight_failure_never_leaks_raw_error_or_claims_success(tmp_path: Pat
     assert "VERIFIED" not in "\n".join(output)
 
 
+def test_runtime_binding_failure_stops_before_health_or_provider_preflight(tmp_path: Path) -> None:
+    deps, calls = _dependencies(tmp_path)
+    deps = DemoDependencies(**{
+        **deps.__dict__,
+        "preflight_metadata": lambda: {"target_id": "unsafe"},
+    })
+
+    result = run_demo(dependencies=deps, output_root=tmp_path / "failed", emit=lambda _text: None)
+
+    assert result.exit_code == 2
+    assert calls["order"] == []
+
+
+def test_runtime_binding_metadata_is_published_without_agent_configuration(tmp_path: Path) -> None:
+    deps, calls = _dependencies(tmp_path)
+    deps = DemoDependencies(**{
+        **deps.__dict__, "preflight_metadata": lambda: {
+            "target_id": "crack-school-portal", "snapshot_sha256": "b" * 64,
+            "runtime_status": "running", "architecture_provenance": "source-derived approved snapshot",
+        },
+    })
+    events: list[dict[str, object]] = []
+
+    result = run_demo(
+        dependencies=deps, output_root=tmp_path / "demo", emit=lambda _text: None,
+        progress=lambda **event: events.append(event),
+    )
+
+    assert result.exit_code == 0
+    preflight = next(event for event in events if event["event_type"] == "preflight.completed")
+    assert preflight["metadata"] == {
+        "role_bindings": [
+            "mapper · configured · configured", "identity · configured · configured",
+            "verifier_a · configured · configured", "verifier_b · configured · configured",
+        ],
+        "target_id": "crack-school-portal", "snapshot_sha256": "b" * 64,
+        "runtime_status": "running", "architecture_provenance": "source-derived approved snapshot",
+    }
+    assert calls["order"][:4] == ["client:mapper", "client:identity", "client:verifier_a", "client:verifier_b"]
+
+
+def test_runtime_callables_are_forwarded_only_when_explicit(tmp_path: Path) -> None:
+    deps, _calls = _dependencies(tmp_path)
+    captured: dict[str, object] = {}
+    mapper = deps.mapper
+    identity = deps.identity
+    verifier = deps.verifier
+
+    def wrapped_mapper(**kwargs: object) -> object:
+        captured["source_reader"] = kwargs.get("source_reader")
+        return mapper(**kwargs)
+
+    def wrapped_identity(**kwargs: object) -> object:
+        captured["identity_endpoint"] = kwargs.get("endpoint_caller")
+        return identity(**kwargs)
+
+    def wrapped_verifier(hypothesis_id: str, **kwargs: object) -> object:
+        captured["verifier_endpoint"] = kwargs.get("endpoint_caller")
+        captured["verifier_resetter"] = kwargs.get("resetter")
+        return verifier(hypothesis_id, **kwargs)
+
+    source_reader = lambda _path: "source"
+    endpoint_caller = lambda _method, _path, _token: {"status_code": 200}
+    verifier_resetter = lambda: "reset:00000000-0000-4000-8000-000000000000:state-sha256:abcd1234abcd1234"
+    deps = DemoDependencies(**{
+        **deps.__dict__, "mapper": wrapped_mapper, "identity": wrapped_identity,
+        "verifier": wrapped_verifier, "source_reader": source_reader,
+        "endpoint_caller": endpoint_caller, "verifier_resetter": verifier_resetter,
+    })
+
+    result = run_demo(dependencies=deps, output_root=tmp_path / "bound", emit=lambda _text: None)
+
+    assert result.exit_code == 0
+    assert captured == {
+        "source_reader": source_reader,
+        "identity_endpoint": endpoint_caller,
+        "verifier_endpoint": endpoint_caller,
+        "verifier_resetter": verifier_resetter,
+    }
+
+
 def test_module_has_no_configurable_target_or_shell_surface() -> None:
     source = Path(__file__).resolve().parents[1].joinpath("demo.py").read_text(encoding="utf-8")
     assert "subprocess" not in source and "os.system" not in source
