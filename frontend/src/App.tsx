@@ -23,6 +23,8 @@ interface AppProps {
   transport?: ConsoleTransport
 }
 
+const PREVIEW_EVENT_INTERVAL_MS = 500
+
 const NEXT_STEP: Record<StageKey | 'session', string> = {
   session: 'The coordinator either begins fixed preflight or closes the terminal state.',
   preflight: 'A successful preflight activates the source-only mapper.',
@@ -251,7 +253,10 @@ export default function App({ preview, initialEvents, transport = liveTransport 
   const [mode, setMode] = useState<DisplayMode>('simple')
   const [selectedSequence, setSelectedSequence] = useState<number | null>(null)
   const [startError, setStartError] = useState<string | null>(null)
+  const [previewReplaying, setPreviewReplaying] = useState(false)
   const unsubscribe = useRef<(() => void) | null>(null)
+  const previewTimer = useRef<number | null>(null)
+  const previewGeneration = useRef(0)
   const derived = useMemo(() => deriveConsole(consoleState), [consoleState])
   const selected = consoleState.events.find((event) => event.sequence === selectedSequence)
     ?? consoleState.events.at(-1)
@@ -291,16 +296,41 @@ export default function App({ preview, initialEvents, transport = liveTransport 
   useEffect(() => () => {
     unsubscribe.current?.()
     unsubscribe.current = null
+    previewGeneration.current += 1
+    if (previewTimer.current !== null) window.clearTimeout(previewTimer.current)
+    previewTimer.current = null
   }, [])
 
   async function start() {
     setStartError(null)
     unsubscribe.current?.()
     unsubscribe.current = null
+    previewGeneration.current += 1
+    if (previewTimer.current !== null) window.clearTimeout(previewTimer.current)
+    previewTimer.current = null
+    setPreviewReplaying(false)
     dispatch({ type: 'reset' })
     setSelectedSequence(null)
     if (previewKind) {
-      for (const event of previewEvents(previewKind)) dispatch({ type: 'event', event })
+      const events = previewEvents(previewKind)
+      const generation = previewGeneration.current
+      setPreviewReplaying(true)
+
+      const replayNext = (index: number) => {
+        if (previewGeneration.current !== generation) return
+        dispatch({ type: 'event', event: events[index] })
+        if (index === events.length - 1) {
+          previewTimer.current = null
+          setPreviewReplaying(false)
+          return
+        }
+        previewTimer.current = window.setTimeout(
+          () => replayNext(index + 1),
+          PREVIEW_EVENT_INTERVAL_MS,
+        )
+      }
+
+      replayNext(0)
       return
     }
     try {
@@ -328,6 +358,7 @@ export default function App({ preview, initialEvents, transport = liveTransport 
   const verifierRunId = derived.terminal?.metadata.verifier_run_id
   const latestAnnouncement = consoleState.events.at(-1)?.headline ?? 'Console ready'
   const preflight = latest(consoleState.events, 'preflight.completed')
+  const runActive = previewReplaying || derived.active
 
   return (
     <div className="app-shell">
@@ -347,8 +378,8 @@ export default function App({ preview, initialEvents, transport = liveTransport 
           <div><p className="kicker">Fixed canonical workflow</p><h1 id="control-heading">See the evidence form as the code executes.</h1><p className="lede">One contained workflow. No target input. No fake progress. Every transition below comes from the validated event stream.</p></div>
           <div className="run-control">
             <p><strong>Provider boundary</strong>The live run sends bounded synthetic context to the configured Groq and Gemini roles. No credentials, source files, database contents, or raw responses enter this console.</p>
-            <button type="button" className="start-button" onClick={start} disabled={derived.active} aria-describedby="run-boundary">
-              {derived.active ? 'Contained run active' : previewKind ? 'Replay recorded preview' : 'Start contained verification run'}
+            <button type="button" className="start-button" onClick={start} disabled={runActive} aria-describedby="run-boundary">
+              {previewReplaying ? 'Replay in progress' : derived.active ? 'Contained run active' : previewKind ? 'Replay recorded preview' : 'Start contained verification run'}
             </button>
             <span id="run-boundary">Server-generated session · one active run maximum</span>
             {startError && <p className="inline-error" role="alert">{startError}</p>}

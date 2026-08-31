@@ -165,7 +165,7 @@ npm ci
 npm run dev
 ```
 
-Open `http://127.0.0.1:4173/?preview=success`, then choose **Replay recorded preview**.
+Open `http://127.0.0.1:4173/?preview=success`, then choose **Replay recorded preview**. The committed events replay one at a time so stage activation, sequential verifier roles, and finite presentation markers remain visible; replay makes no provider calls or ledger writes.
 
 ### Read existing evidence
 
@@ -256,7 +256,7 @@ git diff --check
 ```
 
 - Python: **263 passed, 1 warning**
-- Frontend: **39 tests passed**; TypeScript check and production build: passed
+- Frontend: **40 tests passed**; TypeScript check and production build: passed
 - Docker Compose configuration: passed
 
 ## Repository guide

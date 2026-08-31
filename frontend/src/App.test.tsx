@@ -1,5 +1,5 @@
 import { StrictMode } from 'react'
-import { render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from './App'
 import { previewEvents } from './fixtures'
@@ -129,6 +129,29 @@ describe('live operations console', () => {
   it('disables the run button while a received session is active', () => {
     render(<App preview={null} initialEvents={previewEvents('success').slice(0, 1)} />)
     expect(screen.getByRole('button', { name: 'Contained run active' })).toBeDisabled()
+  })
+
+  it('paces a recorded preview replay instead of repainting only the terminal state', () => {
+    vi.useFakeTimers()
+    try {
+      render(<App preview="success" />)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Replay recorded preview' }))
+
+      expect(screen.getByRole('button', { name: 'Replay in progress' })).toBeDisabled()
+      expect(screen.getAllByRole('button', { name: /^Inspect event/ })).toHaveLength(1)
+      expect(screen.getByText('0 / 7 stages complete')).toBeInTheDocument()
+
+      act(() => vi.advanceTimersToNextTimer())
+      expect(screen.getAllByRole('button', { name: /^Inspect event/ })).toHaveLength(2)
+
+      act(() => vi.runAllTimers())
+      expect(screen.getAllByRole('button', { name: /^Inspect event/ })).toHaveLength(previewEvents('success').length)
+      expect(screen.getByRole('button', { name: 'Replay recorded preview' })).toBeEnabled()
+      expect(screen.getByText('7 / 7 stages complete')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('has keyboard-operable labelled controls and a polite announcement', async () => {
