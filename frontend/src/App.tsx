@@ -254,6 +254,8 @@ export default function App({ preview, initialEvents, transport = liveTransport 
   const [selectedSequence, setSelectedSequence] = useState<number | null>(null)
   const [startError, setStartError] = useState<string | null>(null)
   const [previewReplaying, setPreviewReplaying] = useState(false)
+  const [mapGeneration, setMapGeneration] = useState(0)
+  const [mapActive, setMapActive] = useState(false)
   const unsubscribe = useRef<(() => void) | null>(null)
   const previewTimer = useRef<number | null>(null)
   const previewGeneration = useRef(0)
@@ -309,6 +311,7 @@ export default function App({ preview, initialEvents, transport = liveTransport 
     if (previewTimer.current !== null) window.clearTimeout(previewTimer.current)
     previewTimer.current = null
     setPreviewReplaying(false)
+    setMapGeneration((generation) => generation + 1)
     dispatch({ type: 'reset' })
     setSelectedSequence(null)
     if (previewKind) {
@@ -358,7 +361,7 @@ export default function App({ preview, initialEvents, transport = liveTransport 
   const verifierRunId = derived.terminal?.metadata.verifier_run_id
   const latestAnnouncement = consoleState.events.at(-1)?.headline ?? 'Console ready'
   const preflight = latest(consoleState.events, 'preflight.completed')
-  const runActive = previewReplaying || derived.active
+  const runActive = previewReplaying || derived.active || mapActive
 
   return (
     <div className="app-shell">
@@ -379,7 +382,7 @@ export default function App({ preview, initialEvents, transport = liveTransport 
           <div className="run-control">
             <p><strong>Provider boundary</strong>The live run sends bounded synthetic context to the configured Groq and Gemini roles. No credentials, source files, database contents, or raw responses enter this console.</p>
             <button type="button" className="start-button" onClick={start} disabled={runActive} aria-describedby="run-boundary">
-              {previewReplaying ? 'Replay in progress' : derived.active ? 'Contained run active' : previewKind ? 'Replay recorded preview' : 'Start contained verification run'}
+              {previewKind && (previewReplaying || mapActive) ? 'Replay in progress' : derived.active || mapActive ? 'Contained run active' : previewKind ? 'Replay recorded preview' : 'Start contained verification run'}
             </button>
             <span id="run-boundary">Server-generated session · one active run maximum</span>
             {startError && <p className="inline-error" role="alert">{startError}</p>}
@@ -395,7 +398,7 @@ export default function App({ preview, initialEvents, transport = liveTransport 
           {consoleState.streamError && <p className="inline-error" role="alert">{consoleState.streamError}</p>}
         </section>
 
-        <ArchitectureMap events={consoleState.events} />
+        <ArchitectureMap events={consoleState.events} generation={mapGeneration} onAnimationActiveChange={setMapActive} />
 
         <div className="primary-grid">
           <section className="story-section" aria-labelledby="story-heading">

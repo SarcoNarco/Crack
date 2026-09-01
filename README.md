@@ -53,7 +53,7 @@ Logical roles run as sequential Python operations, not autonomous parallel servi
 
 ![Original top-down operations-floor environment for the synthetic school portal](frontend/public/map/crack-operations-floor.png)
 
-The console overlays fixed canonical room labels, narrow orthogonal routes, four staging slots, and safe latest-event highlights on this local original environment. Sprint 23 is deliberately static: movement, tools, and sound arrive only through the separately tested Sprints 24 and 25. The floor never claims a physical agent location, parallel execution, or a security verdict.
+The console overlays fixed canonical room labels, narrow orthogonal routes, four staging slots, and safe latest-event highlights on this local original environment. During an operator-started replay, four labeled 32 px sprite characters take finite, sequential, cardinal-only journeys and return to their own staging slots. The floor never claims a physical agent location, parallel execution, or a security verdict; tool effects, sound, and the final 48-second replay schedule remain separate Sprint 25 work.
 
 ## Evidence report
 
@@ -155,11 +155,13 @@ Sprint 21 adds a separate host-local runtime-console mode for exactly one active
 
 Each injected operation revalidates the captured active descriptor and the exact label-bound managed container. Resets re-inspect immediately before the fixed image-owned seed command, health-check afterwards, and return only a deterministic 16-character logical-state fingerprint derived inside the container; no fixture rows or tokens cross the Docker adapter. Runtime/architecture attestation occurs before provider client construction and publishes only target ID, approved registration hash, `running` status, and source-derived provenance. The console displays those facts only after an exact completed preflight event; preview remains committed synthetic fixture data and unbound. Offline Sprint 21 work does not start Docker, run providers, change the ledger, or make a security verdict.
 
-### Static operations floor (Sprint 23)
+### Operations floor and bounded journeys (Sprints 23–24)
 
 Sprint 23 replaces the old diagram canvas with one fixed 960×540 top-down floor. Six themed stations mirror the safe canonical portal graph, nine authored dotted routes use horizontal and vertical segments only, and Mapper, Authorization Tester, Verifier A, and Verifier B remain labeled in the staging dock. Geometry and labels are committed presentation data; events can highlight only the already allowlisted room relations. The original background and its provenance are local, with no CDN or copied commercial-game asset.
 
-This sprint intentionally contains no character movement, attack animation, sound, replay retiming, backend change, provider call, Docker action, or ledger write. Those presentation behaviors are introduced only by later locked sprints with their own timing, cancellation, accessibility, and truth-boundary tests.
+Sprint 24 adds four original local eight-frame sprite sheets and one deterministic frontend animation director. Only fixed allowlisted events can select a fixed role, room, and authored route. The director keeps one role active at a time, requires an executed safe verifier call before verifier movement, holds Verifier B until Verifier A returns, cancels stale work on restart or unmount, and presents a fixed status instead of movement when reduced motion is requested. The initial completed preview remains staged; movement begins only after the existing replay or run control is used.
+
+The movement layer adds no tool attack effects, sound, replay retiming, backend change, provider call, Docker action, or ledger write. Sprite clipping, cardinal paths, local provenance, and safe captions are code-owned; verified findings still come only from ordinary consensus code.
 
 ### Provider-free UI preview
 
@@ -171,7 +173,7 @@ npm ci
 npm run dev
 ```
 
-Open `http://127.0.0.1:4173/?preview=success`, then choose **Replay recorded preview**. The committed events replay one at a time so stage activation, sequential verifier roles, room relations, and the static operations floor remain visible; replay makes no provider calls or ledger writes.
+Open `http://127.0.0.1:4173/?preview=success`, then choose **Replay recorded preview**. The committed events replay one at a time so stage activation, sequential verifier roles, room relations, and bounded character journeys remain visible; replay makes no provider calls or ledger writes.
 
 ### Read existing evidence
 

@@ -145,6 +145,10 @@ describe('live operations console', () => {
       act(() => vi.advanceTimersToNextTimer())
       expect(screen.getAllByRole('button', { name: /^Inspect event/ })).toHaveLength(2)
 
+      act(() => vi.advanceTimersByTime(15_000))
+      expect(screen.getAllByRole('button', { name: /^Inspect event/ })).toHaveLength(previewEvents('success').length)
+      expect(screen.getByRole('button', { name: 'Replay in progress' })).toBeDisabled()
+
       act(() => vi.runAllTimers())
       expect(screen.getAllByRole('button', { name: /^Inspect event/ })).toHaveLength(previewEvents('success').length)
       expect(screen.getByRole('button', { name: 'Replay recorded preview' })).toBeEnabled()
