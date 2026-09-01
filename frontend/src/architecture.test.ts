@@ -89,16 +89,17 @@ describe('Sprint 20 event-tied architecture markers', () => {
     expect(deriveArchitectureMap([verifierA, verifierB]).relation?.actor).toBe('Verifier B (sequential)')
   })
 
-  it('uses only safe static labels and finite presentation-only motion selectors', () => {
+  it('uses only safe static labels and no Sprint 23 map choreography', () => {
     expect(ARCHITECTURE_GRAPH.nodes.map((node) => node.label)).toEqual([
       'Browser portal', 'FastAPI API', 'Grade lifecycle', 'Role and authentication', 'SQLite persistence', 'Submissions',
     ])
-    expect(styles).toMatch(/@keyframes architecture-scan/)
-    expect(styles).toMatch(/@keyframes architecture-probe/)
-    expect(styles).toMatch(/@keyframes architecture-pickaxe/)
-    expect(styles).toMatch(/@keyframes architecture-beam/)
-    expect(styles).not.toMatch(/animation:[^;}]*infinite/)
-    expect(styles).toMatch(/\.architecture-effect, \.architecture-effect \* \{ animation: none !important; transform: none !important; opacity: 1 !important;/)
+    expect(styles).toMatch(/aspect-ratio: 16 \/ 9/)
+    expect(styles).toMatch(/\.architecture-map \{[^}]*overflow: hidden/)
+    expect(styles).toMatch(/\.architecture-map \{ width: 728px; max-width: none;/)
+    expect(styles).toMatch(/\.architecture-map-viewport \{ overflow-x: auto;/)
+    expect(styles).toMatch(/image-rendering: pixelated/)
+    expect(styles).not.toMatch(/@keyframes architecture-/)
+    expect(styles).not.toMatch(/\.architecture-effect/)
     expect(styles).toMatch(/@media \(forced-colors: active\)/)
     expect(styles).toMatch(/CanvasText/)
     expect(styles).toMatch(/Highlight/)

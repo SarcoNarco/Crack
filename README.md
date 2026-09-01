@@ -51,9 +51,9 @@ flowchart LR
 
 Logical roles run as sequential Python operations, not autonomous parallel services. All application access passes through the fixed scope controller.
 
-![Event-related target architecture map for the synthetic school portal](docs/assets/crack-architecture-map.jpg)
+![Original top-down operations-floor environment for the synthetic school portal](frontend/public/map/crack-operations-floor.png)
 
-The map highlights the canonical component related to the latest validated presentation event. Its finite tool markers are explanatory UI only: they do not claim a physical agent location, parallel execution, or a security verdict.
+The console overlays fixed canonical room labels, narrow orthogonal routes, four staging slots, and safe latest-event highlights on this local original environment. Sprint 23 is deliberately static: movement, tools, and sound arrive only through the separately tested Sprints 24 and 25. The floor never claims a physical agent location, parallel execution, or a security verdict.
 
 ## Evidence report
 
@@ -155,6 +155,12 @@ Sprint 21 adds a separate host-local runtime-console mode for exactly one active
 
 Each injected operation revalidates the captured active descriptor and the exact label-bound managed container. Resets re-inspect immediately before the fixed image-owned seed command, health-check afterwards, and return only a deterministic 16-character logical-state fingerprint derived inside the container; no fixture rows or tokens cross the Docker adapter. Runtime/architecture attestation occurs before provider client construction and publishes only target ID, approved registration hash, `running` status, and source-derived provenance. The console displays those facts only after an exact completed preflight event; preview remains committed synthetic fixture data and unbound. Offline Sprint 21 work does not start Docker, run providers, change the ledger, or make a security verdict.
 
+### Static operations floor (Sprint 23)
+
+Sprint 23 replaces the old diagram canvas with one fixed 960×540 top-down floor. Six themed stations mirror the safe canonical portal graph, nine authored dotted routes use horizontal and vertical segments only, and Mapper, Authorization Tester, Verifier A, and Verifier B remain labeled in the staging dock. Geometry and labels are committed presentation data; events can highlight only the already allowlisted room relations. The original background and its provenance are local, with no CDN or copied commercial-game asset.
+
+This sprint intentionally contains no character movement, attack animation, sound, replay retiming, backend change, provider call, Docker action, or ledger write. Those presentation behaviors are introduced only by later locked sprints with their own timing, cancellation, accessibility, and truth-boundary tests.
+
 ### Provider-free UI preview
 
 This preview uses committed fixture events. It makes no provider calls and writes no ledger evidence.
@@ -165,7 +171,7 @@ npm ci
 npm run dev
 ```
 
-Open `http://127.0.0.1:4173/?preview=success`, then choose **Replay recorded preview**. The committed events replay one at a time so stage activation, sequential verifier roles, and finite presentation markers remain visible; replay makes no provider calls or ledger writes.
+Open `http://127.0.0.1:4173/?preview=success`, then choose **Replay recorded preview**. The committed events replay one at a time so stage activation, sequential verifier roles, room relations, and the static operations floor remain visible; replay makes no provider calls or ledger writes.
 
 ### Read existing evidence
 

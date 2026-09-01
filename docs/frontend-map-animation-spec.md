@@ -1,8 +1,8 @@
 # Crack Frontend Map and Animation Specification
 
-Status: **Draft for user approval**
+Status: **Approved on 2026-09-01**
 Scope: architecture-map presentation only
-Implementation gate: **No implementation begins until this document is approved.**
+Implementation gate: **The locked Sprint 23–26 sequence is approved; each sprint keeps its own acceptance and Git gate.**
 
 ## 1. Purpose
 
@@ -560,4 +560,4 @@ No provider-backed Crack workflow, Docker runtime action, ledger write, secret r
 
 ## 23. Approval decision
 
-Approval of this document authorizes implementation planning for Sprint 23 only. It does not authorize later sprints, provider calls, Docker execution, ledger mutation, or expansion beyond the fixed synthetic school portal.
+The user approved the locked document and the complete Sprint 23–26 implementation sequence on 2026-09-01. That approval does not authorize provider calls, Docker execution, ledger mutation, copied commercial assets, or expansion beyond the fixed synthetic school portal and architecture-map presentation scope.
