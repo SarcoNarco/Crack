@@ -436,7 +436,7 @@ export default function App({ preview, initialEvents, transport = liveTransport 
         </div>
 
         <section aria-labelledby="verification-heading">
-          <div className="section-heading"><div><p className="kicker">Independent, not simultaneous</p><h2 id="verification-heading">Sequential verification lanes</h2><p>These are isolated logical roles activated one after the other through Python function calls. They are not parallel agents, processes, or communicating services.</p></div></div>
+          <div className="section-heading"><div><p className="kicker">Independent, not simultaneous</p><h2 id="verification-heading">Sequential verification lanes</h2></div></div>
           <div className="lane-grid">
             <VerifierLane stage="verifier_a" title="Independent check 1 — Verifier A" events={consoleState.events} state={derived.stages.verifier_a} mode={mode} />
             <VerifierLane stage="verifier_b" title="Independent check 2 — Verifier B" events={consoleState.events} state={derived.stages.verifier_b} mode={mode} />

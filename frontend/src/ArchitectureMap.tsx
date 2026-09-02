@@ -495,7 +495,6 @@ export function ArchitectureMap({
         </aside>
       </div>
       <p className="architecture-animation-status" aria-live="polite" aria-atomic="true">{animationAnnouncement(animation)}</p>
-      <p className="architecture-note">Rooms and corridors mirror fixed Sprint 18 canonical portal relationships. Agent journeys present accepted events only; verified findings remain code-owned consensus. This does not load, revalidate, or run an imported target snapshot.</p>
     </section>
   )
 }
