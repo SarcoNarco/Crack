@@ -364,7 +364,6 @@ export default function App({ preview, initialEvents, transport = liveTransport 
     ? derived.report.metadata.report_url
     : null
   const verifierRunId = derived.terminal?.metadata.verifier_run_id
-  const latestAnnouncement = consoleState.events.at(-1)?.headline ?? 'Console ready'
   const preflight = latest(consoleState.events, 'preflight.completed')
   const runActive = previewReplaying || derived.active || mapActive
 
@@ -484,7 +483,6 @@ export default function App({ preview, initialEvents, transport = liveTransport 
           </section>
         )}
       </main>
-      <p className="sr-only" aria-live="polite" aria-atomic="true">{latestAnnouncement}</p>
       <footer><span>Presentation events are replayable.</span><strong>The append-only SQLite ledger remains the evidence authority.</strong></footer>
     </div>
   )

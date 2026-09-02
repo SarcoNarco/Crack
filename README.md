@@ -8,9 +8,9 @@ The answer is a local-only pipeline where models propose bounded plans, ordinary
 
 > **Safety boundary:** Crack is not a general scanner. It is built only for the included synthetic school portal, fixed loopback routes, synthetic Teacher/Student identities, and disposable data. Never point it at third-party or production systems.
 
-![Crack live operations console replaying a completed contained verification run](docs/assets/crack-operations-console.jpg)
+![Crack live operations console during a provider-free recorded replay](docs/assets/crack-operations-console.jpg)
 
-_Provider-free replay of committed, accepted synthetic fixture events. Screenshot capture made no provider calls and did not modify the ledger._
+_Provider-free replay of committed, accepted synthetic fixture events while the console is active. Screenshot capture made no provider calls and did not modify the ledger._
 
 ## What this project demonstrates
 
@@ -51,7 +51,9 @@ flowchart LR
 
 Logical roles run as sequential Python operations, not autonomous parallel services. All application access passes through the fixed scope controller.
 
-![Original top-down operations-floor environment for the synthetic school portal](frontend/public/map/crack-operations-floor.png)
+![Watch-only architecture floor with Verifier B presenting a bounded submission check](docs/assets/crack-architecture-map.jpg)
+
+_Active replay frame from the committed synthetic fixture. The highlighted route and compact tool effect are presentation-only; they do not claim physical execution, damage, or a verdict._
 
 The console overlays fixed canonical room labels, narrow orthogonal routes, four staging slots, and safe latest-event highlights on this local original environment. During an operator-started replay, four labeled 32 px sprite characters take finite, sequential, cardinal-only journeys, use compact event-tied tools, and return to their own staging slots. The floor never claims a physical agent location, parallel execution, damage, or a security verdict; only code-owned consensus can establish the recorded result.
 

@@ -261,7 +261,7 @@ describe('live operations console', () => {
     expect(within(modes).getByRole('button', { name: 'Simple' })).toHaveAttribute('aria-pressed', 'true')
     await user.tab()
     expect(document.activeElement).toHaveAttribute('href', '#main-content')
-    expect(document.querySelector('[aria-live="polite"]')).toBeInTheDocument()
+    expect(document.querySelectorAll('[aria-live="polite"]')).toHaveLength(1)
     expect(screen.getByRole('button', { name: /Inspect event 0/ })).toBeInTheDocument()
   })
 
