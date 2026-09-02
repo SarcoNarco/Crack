@@ -39,10 +39,10 @@ describe('Sprint 24 safe map cues', () => {
 
   it('allows verifier movement only for active allowlisted GET routes', () => {
     expect(mapEventToCue(event('verifier_a.call_recorded', { executed: true, method: 'GET', resolved_path: '/submissions/mine' }))).toMatchObject({
-      agentId: 'verifier-a', roomId: 'submissions', routeId: 'verifier-a-to-submissions', actionId: 'inspect',
+      agentId: 'verifier-a', roomId: 'submissions', routeId: 'verifier-a-to-submissions', actionId: 'pickaxe', cycles: 3,
     })
     expect(mapEventToCue(event('verifier_b.call_recorded', { executed: true, method: 'GET', resolved_path: '/submissions/student-b/grade' }))).toMatchObject({
-      agentId: 'verifier-b', roomId: 'grade-lifecycle', routeId: 'verifier-b-to-grade-lifecycle', actionId: 'inspect',
+      agentId: 'verifier-b', roomId: 'grade-lifecycle', routeId: 'verifier-b-to-grade-lifecycle', actionId: 'beam', cycles: 3,
     })
     for (const metadata of [
       { executed: false, method: 'GET', resolved_path: '/submissions/mine' },

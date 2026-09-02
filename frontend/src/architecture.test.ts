@@ -155,10 +155,11 @@ describe('Sprint 20 event-tied architecture markers', () => {
     expect(deriveArchitectureEffect(unsafeCall, mapEventToArchitecture(unsafeCall))).toMatchObject({ kind: 'static', nodeId: null })
   })
 
-  it('keeps outside-target actors static and prevents timing or random effect sources', () => {
+  it('keeps outside-target actors static and prevents event-derived or random effect sources', () => {
     const consensus = previewEvents('success').find((event) => event.type === 'consensus.completed')!
     const relation = mapEventToArchitecture(consensus)
     expect(deriveArchitectureEffect(consensus, relation)).toMatchObject({ kind: 'static', nodeId: null })
-    expect(`${architectureSource}\n${mapSource}`).not.toMatch(/\b(?:setTimeout|setInterval|requestAnimationFrame|Date|Math\.random)\b/)
+    expect(architectureSource).not.toMatch(/\b(?:setTimeout|setInterval|requestAnimationFrame|Date|Math\.random)\b/)
+    expect(mapSource).not.toMatch(/\b(?:setInterval|requestAnimationFrame|Date|Math\.random)\b/)
   })
 })

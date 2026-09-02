@@ -53,10 +53,23 @@ export const STAGING_SLOTS: readonly StagingSlot[] = [
   { agentId: 'verifier-b', label: 'Verifier B', bounds: { x: 606, y: 458, width: 110, height: 40 }, dockPoint: { x: 661, y: 478 } },
 ] as const
 
-export interface MapRoute {
+export interface MapWaypointRoute {
   readonly id: string
+  readonly waypoints: readonly MapPoint[]
+}
+
+export interface MapRoute extends MapWaypointRoute {
   readonly agentId: MapAgentId
   readonly roomId: ArchitectureNodeId
+}
+
+/**
+ * Fixed room-to-room corridors used only when adjacent safe cues keep the
+ * same agent on one journey. They never accept event-provided coordinates.
+ */
+export interface MapTransferRoute extends MapWaypointRoute {
+  readonly fromRoomId: ArchitectureNodeId
+  readonly toRoomId: ArchitectureNodeId
   readonly waypoints: readonly MapPoint[]
 }
 
@@ -76,6 +89,21 @@ export const MAP_ROUTES: readonly MapRoute[] = [
   { id: 'verifier-a-to-grade-lifecycle', agentId: 'verifier-a', roomId: 'grade-lifecycle', waypoints: [verifierADock, { x: 531, y: 244 }, { x: 628, y: 244 }, { x: 628, y: 340 }] },
   { id: 'verifier-b-to-submissions', agentId: 'verifier-b', roomId: 'submissions', waypoints: [verifierBDock, { x: 628, y: 478 }, { x: 628, y: 244 }, { x: 814, y: 244 }, { x: 814, y: 204 }] },
   { id: 'verifier-b-to-grade-lifecycle', agentId: 'verifier-b', roomId: 'grade-lifecycle', waypoints: [verifierBDock, { x: 628, y: 478 }, { x: 628, y: 340 }] },
+] as const
+
+export const MAP_TRANSFER_ROUTES: readonly MapTransferRoute[] = [
+  {
+    id: 'submissions-to-grade-lifecycle',
+    fromRoomId: 'submissions',
+    toRoomId: 'grade-lifecycle',
+    waypoints: [{ x: 814, y: 204 }, { x: 814, y: 244 }, { x: 628, y: 244 }, { x: 628, y: 340 }],
+  },
+  {
+    id: 'grade-lifecycle-to-submissions',
+    fromRoomId: 'grade-lifecycle',
+    toRoomId: 'submissions',
+    waypoints: [{ x: 628, y: 340 }, { x: 628, y: 244 }, { x: 814, y: 244 }, { x: 814, y: 204 }],
+  },
 ] as const
 
 export interface MapSegment {
@@ -153,11 +181,11 @@ export function isBoundsInsideMap(bounds: MapBounds): boolean {
     && bounds.y + bounds.height <= MAP_HEIGHT - MAP_EDGE_INSET
 }
 
-export function routeSegments(route: MapRoute): readonly MapSegment[] {
+export function routeSegments(route: MapWaypointRoute): readonly MapSegment[] {
   return route.waypoints.slice(1).map((end, index) => ({ start: route.waypoints[index], end }))
 }
 
-export function isCardinalRoute(route: MapRoute): boolean {
+export function isCardinalRoute(route: MapWaypointRoute): boolean {
   return routeSegments(route).every(({ start, end }) => (start.x === end.x) !== (start.y === end.y))
 }
 
@@ -193,7 +221,7 @@ function collinearOverlapPoint(first: MapSegment, second: MapSegment): MapPoint 
   return start <= end ? { x: start, y: first.start.y } : null
 }
 
-export function findUnapprovedRouteCrossings(routes: readonly MapRoute[] = MAP_ROUTES): readonly RouteCrossing[] {
+export function findUnapprovedRouteCrossings(routes: readonly (MapRoute | MapTransferRoute)[] = [...MAP_ROUTES, ...MAP_TRANSFER_ROUTES]): readonly RouteCrossing[] {
   const crossings: RouteCrossing[] = []
   routes.forEach((firstRoute, firstIndex) => {
     routes.slice(firstIndex + 1).forEach((secondRoute) => {

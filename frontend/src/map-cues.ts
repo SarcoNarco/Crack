@@ -2,7 +2,7 @@ import type { ArchitectureNodeId } from './architecture'
 import type { MapAgentId } from './map-layout'
 import type { PresentationEvent } from './types'
 
-export const MAP_ACTION_IDS = ['none', 'scan', 'probe', 'inspect'] as const
+export const MAP_ACTION_IDS = ['none', 'scan', 'probe', 'pickaxe', 'beam'] as const
 export type MapActionId = typeof MAP_ACTION_IDS[number]
 
 export const MAP_DURATION_CLASSES = ['brief', 'standard', 'extended'] as const
@@ -67,7 +67,7 @@ const VERIFIER_A_SUBMISSIONS_CUE: MapCue = {
   agentId: 'verifier-a',
   roomId: 'submissions',
   routeId: 'verifier-a-to-submissions',
-  actionId: 'inspect',
+  actionId: 'pickaxe',
   cycles: 3,
   caption: 'Verifier A is reviewing a fixed submissions route.',
   durationClass: 'extended',
@@ -77,7 +77,7 @@ const VERIFIER_A_GRADE_CUE: MapCue = {
   agentId: 'verifier-a',
   roomId: 'grade-lifecycle',
   routeId: 'verifier-a-to-grade-lifecycle',
-  actionId: 'inspect',
+  actionId: 'pickaxe',
   cycles: 3,
   caption: 'Verifier A is reviewing a fixed grade lifecycle route.',
   durationClass: 'extended',
@@ -87,7 +87,7 @@ const VERIFIER_B_SUBMISSIONS_CUE: MapCue = {
   agentId: 'verifier-b',
   roomId: 'submissions',
   routeId: 'verifier-b-to-submissions',
-  actionId: 'inspect',
+  actionId: 'beam',
   cycles: 3,
   caption: 'Verifier B is reviewing a fixed submissions route.',
   durationClass: 'extended',
@@ -97,7 +97,7 @@ const VERIFIER_B_GRADE_CUE: MapCue = {
   agentId: 'verifier-b',
   roomId: 'grade-lifecycle',
   routeId: 'verifier-b-to-grade-lifecycle',
-  actionId: 'inspect',
+  actionId: 'beam',
   cycles: 3,
   caption: 'Verifier B is reviewing a fixed grade lifecycle route.',
   durationClass: 'extended',

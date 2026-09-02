@@ -1,8 +1,19 @@
-import { MAP_ROOMS, MAP_ROUTES, STAGING_SLOTS, type MapAgentId, type MapPoint, type MapRoute } from './map-layout'
-import { isMotionCue, mapEventToCue, type MapCue, type MapDurationClass } from './map-cues'
+import {
+  MAP_ROOMS,
+  MAP_ROUTES,
+  MAP_TRANSFER_ROUTES,
+  STAGING_SLOTS,
+  type MapAgentId,
+  type MapPoint,
+  type MapRoute,
+  type MapTransferRoute,
+} from './map-layout'
+import { isMotionCue, mapEventToCue, type MapCue } from './map-cues'
 import type { PresentationEvent } from './types'
 
 export const MAP_MOVEMENT_UNITS_PER_SECOND = 50
+export const RECORDED_REPLAY_MOVEMENT_UNITS_PER_SECOND = 210
+export const INTERACTION_CYCLE_DURATION_MS = 720
 
 export type CardinalDirection = 'up' | 'down' | 'left' | 'right'
 export type AgentPhase = 'docked' | 'walk' | 'face' | 'interact' | 'acknowledge' | 'return'
@@ -19,8 +30,11 @@ export interface AnimationDirectorState {
   readonly generation: number
   readonly active: boolean
   readonly currentCue: MapCue | null
+  readonly activeRouteId: string | null
   readonly statusText: string
   readonly reducedMotion: boolean
+  readonly movementUnitsPerSecond: number
+  readonly currentCycleIndex: number | null
   readonly agents: readonly AnimationAgentState[]
 }
 
@@ -32,6 +46,7 @@ export interface AnimationScheduler {
 export interface AnimationDirectorOptions {
   readonly scheduler?: AnimationScheduler
   readonly reducedMotion?: boolean
+  readonly movementUnitsPerSecond?: number
   readonly onStateChange?: (state: AnimationDirectorState) => void
 }
 
@@ -40,17 +55,29 @@ interface QueuedCue {
   readonly cue: MapCue
 }
 
-const PHASE_DURATION_MS: Readonly<Record<MapDurationClass, number>> = {
-  brief: 120,
-  standard: 180,
-  extended: 240,
+type MotionCue = MapCue & {
+  readonly agentId: MapAgentId
+  readonly roomId: NonNullable<MapCue['roomId']>
+  readonly routeId: string
 }
+
+interface QueuedMotionCue {
+  readonly sequence: number
+  readonly cue: MotionCue
+}
+
 const FACE_DURATION_MS = 120
 const ACKNOWLEDGE_DURATION_MS = 160
 
 const defaultScheduler: AnimationScheduler = {
   setTimeout: (callback, delayMs) => globalThis.setTimeout(callback, delayMs),
   clearTimeout: (handle) => (globalThis.clearTimeout as (timer: unknown) => void)(handle),
+}
+
+function validMovementSpeed(value: number | undefined): number {
+  if (value === undefined) return MAP_MOVEMENT_UNITS_PER_SECOND
+  if (value === MAP_MOVEMENT_UNITS_PER_SECOND || value === RECORDED_REPLAY_MOVEMENT_UNITS_PER_SECOND) return value
+  throw new Error('movementUnitsPerSecond must use a fixed supported speed')
 }
 
 function dockedAgents(): AnimationAgentState[] {
@@ -68,10 +95,6 @@ function directionBetween(start: MapPoint, end: MapPoint): CardinalDirection {
   return end.x < start.x ? 'left' : 'right'
 }
 
-function movementDuration(start: MapPoint, end: MapPoint): number {
-  return (Math.abs(end.x - start.x) + Math.abs(end.y - start.y)) / MAP_MOVEMENT_UNITS_PER_SECOND * 1000
-}
-
 function directionTowardRoom(roomId: NonNullable<MapCue['roomId']>, from: MapPoint): CardinalDirection {
   const room = MAP_ROOMS.find((candidate) => candidate.id === roomId)
   if (!room) return 'up'
@@ -87,6 +110,7 @@ function directionTowardRoom(roomId: NonNullable<MapCue['roomId']>, from: MapPoi
  */
 export class AnimationDirector {
   private readonly scheduler: AnimationScheduler
+  private readonly movementUnitsPerSecond: number
   private readonly listeners = new Set<(state: AnimationDirectorState) => void>()
   private readonly seenSequences = new Set<number>()
   private readonly queue: QueuedCue[] = []
@@ -96,11 +120,15 @@ export class AnimationDirector {
   private lastAcceptedSequence = Number.NEGATIVE_INFINITY
   private verifierAHasReturned = false
   private currentCue: MapCue | null = null
+  private activeRouteId: string | null = null
+  private currentCycleIndex: number | null = null
   private reducedMotion: boolean
+  private terminal = false
   private disposed = false
 
   constructor(options: AnimationDirectorOptions = {}) {
     this.scheduler = options.scheduler ?? defaultScheduler
+    this.movementUnitsPerSecond = validMovementSpeed(options.movementUnitsPerSecond)
     this.reducedMotion = options.reducedMotion ?? false
     if (options.onStateChange) this.listeners.add(options.onStateChange)
   }
@@ -110,9 +138,12 @@ export class AnimationDirector {
       generation: this.generation,
       active: this.currentCue !== null || this.queue.length > 0,
       currentCue: this.currentCue,
+      activeRouteId: this.activeRouteId,
       statusText: this.currentCue?.caption
         ?? (this.waitingForVerifierA() ? 'Verifier B remains staged until Verifier A returns.' : 'All agents are staged and ready.'),
       reducedMotion: this.reducedMotion,
+      movementUnitsPerSecond: this.movementUnitsPerSecond,
+      currentCycleIndex: this.currentCycleIndex,
       agents: this.agents.map((agent) => ({ ...agent })),
     }
   }
@@ -137,7 +168,7 @@ export class AnimationDirector {
 
   /** Queues accepted events once, sorting a supplied batch by sequence. */
   enqueue(events: PresentationEvent | readonly PresentationEvent[]): number {
-    if (this.disposed) return 0
+    if (this.disposed || this.terminal) return 0
     const candidates = (Array.isArray(events) ? events : [events])
       .slice()
       .sort((left, right) => left.sequence - right.sequence)
@@ -146,8 +177,13 @@ export class AnimationDirector {
       if (this.seenSequences.has(event.sequence) || event.sequence <= this.lastAcceptedSequence) continue
       this.seenSequences.add(event.sequence)
       this.lastAcceptedSequence = event.sequence
-      this.queue.push({ sequence: event.sequence, cue: mapEventToCue(event) })
       accepted += 1
+      if ((event.type === 'session.failed' && event.state === 'failed')
+        || (event.type === 'session.completed' && event.state === 'completed')) {
+        this.stopAtTerminal()
+        break
+      }
+      this.queue.push({ sequence: event.sequence, cue: mapEventToCue(event) })
     }
     this.queue.sort((left, right) => left.sequence - right.sequence)
     this.startNext()
@@ -162,8 +198,11 @@ export class AnimationDirector {
     this.seenSequences.clear()
     this.lastAcceptedSequence = Number.NEGATIVE_INFINITY
     this.verifierAHasReturned = false
+    this.terminal = false
     this.queue.length = 0
     this.currentCue = null
+    this.activeRouteId = null
+    this.currentCycleIndex = null
     this.agents = dockedAgents()
     this.emit()
   }
@@ -177,7 +216,7 @@ export class AnimationDirector {
   }
 
   private startNext(): void {
-    if (this.disposed || this.currentCue !== null) return
+    if (this.disposed || this.terminal || this.currentCue !== null) return
     const nextIndex = this.queue.findIndex((entry) => this.canStart(entry.cue))
     const next = nextIndex < 0 ? undefined : this.queue.splice(nextIndex, 1)[0]
     if (!next) {
@@ -200,27 +239,20 @@ export class AnimationDirector {
       return
     }
     const generation = this.generation
-    if (this.reducedMotion) {
-      this.setAgent(next.cue.agentId, {
-        direction: directionTowardRoom(next.cue.roomId, route.waypoints.at(-1)!),
-        phase: 'acknowledge',
-      })
-      this.emit()
-      this.schedule(generation, this.cueStaticDuration(next.cue), () => this.completeCue(generation))
-      return
-    }
+    this.activeRouteId = route.id
+    if (this.reducedMotion) return this.startReducedInteraction(generation, next.cue, route)
     this.walkRoute(generation, next.cue, route, 1, 'walk')
   }
 
-  private routeFor(cue: MapCue & { readonly agentId: MapAgentId; readonly roomId: NonNullable<MapCue['roomId']>; readonly routeId: string }): MapRoute | null {
+  private routeFor(cue: MotionCue): MapRoute | null {
     const route = MAP_ROUTES.find((candidate) => candidate.id === cue.routeId)
     return route && route.agentId === cue.agentId && route.roomId === cue.roomId ? route : null
   }
 
   private walkRoute(
     generation: number,
-    cue: MapCue & { readonly agentId: MapAgentId; readonly roomId: NonNullable<MapCue['roomId']>; readonly routeId: string },
-    route: MapRoute,
+    cue: MotionCue,
+    route: MapRoute | MapTransferRoute,
     targetIndex: number,
     phase: 'walk' | 'return',
   ): void {
@@ -230,7 +262,7 @@ export class AnimationDirector {
     const end = points[targetIndex]
     this.setAgent(cue.agentId, { x: start.x, y: start.y, direction: directionBetween(start, end), phase })
     this.emit()
-    this.schedule(generation, movementDuration(start, end), () => {
+    this.schedule(generation, this.movementDuration(start, end), () => {
       if (generation !== this.generation || this.disposed) return
       this.setAgent(cue.agentId, { x: end.x, y: end.y, direction: directionBetween(start, end), phase })
       this.emit()
@@ -250,8 +282,8 @@ export class AnimationDirector {
 
   private faceTarget(
     generation: number,
-    cue: MapCue & { readonly agentId: MapAgentId; readonly roomId: NonNullable<MapCue['roomId']>; readonly routeId: string },
-    route: MapRoute,
+    cue: MotionCue,
+    route: MapRoute | MapTransferRoute,
   ): void {
     const target = route.waypoints.at(-1)!
     this.setAgent(cue.agentId, { direction: directionTowardRoom(cue.roomId, target), phase: 'face' })
@@ -261,22 +293,78 @@ export class AnimationDirector {
 
   private interact(
     generation: number,
-    cue: MapCue & { readonly agentId: MapAgentId; readonly roomId: NonNullable<MapCue['roomId']>; readonly routeId: string },
-    route: MapRoute,
+    cue: MotionCue,
+    route: MapRoute | MapTransferRoute,
   ): void {
     if (generation !== this.generation || this.disposed) return
+    this.currentCycleIndex = 1
     this.setAgent(cue.agentId, { phase: 'interact' })
     this.emit()
-    this.schedule(generation, PHASE_DURATION_MS[cue.durationClass] * cue.cycles, () => {
+    this.runInteractionCycle(generation, cue, route)
+  }
+
+  private startReducedInteraction(
+    generation: number,
+    cue: MotionCue,
+    route: MapRoute | MapTransferRoute,
+  ): void {
+    if (generation !== this.generation || this.disposed) return
+    this.currentCycleIndex = 1
+    this.setAgent(cue.agentId, {
+      direction: directionTowardRoom(cue.roomId, route.waypoints.at(-1)!),
+      phase: 'acknowledge',
+    })
+    this.emit()
+    this.runInteractionCycle(generation, cue, route)
+  }
+
+  private runInteractionCycle(
+    generation: number,
+    cue: MotionCue,
+    route: MapRoute | MapTransferRoute,
+  ): void {
+    this.schedule(generation, INTERACTION_CYCLE_DURATION_MS, () => {
       if (generation !== this.generation || this.disposed) return
+      const completedCycle = this.currentCycleIndex ?? cue.cycles
+      if (completedCycle < cue.cycles) {
+        this.currentCycleIndex = completedCycle + 1
+        this.emit()
+        this.runInteractionCycle(generation, cue, route)
+        return
+      }
+      this.currentCycleIndex = null
       this.setAgent(cue.agentId, { phase: 'acknowledge' })
       this.emit()
-      this.schedule(generation, ACKNOWLEDGE_DURATION_MS, () => this.walkRoute(generation, cue, route, 1, 'return'))
+      this.schedule(generation, ACKNOWLEDGE_DURATION_MS, () => this.afterAcknowledge(generation, cue, route))
     })
   }
 
-  private cueStaticDuration(cue: MapCue): number {
-    return PHASE_DURATION_MS[cue.durationClass] * Math.max(1, cue.cycles) + ACKNOWLEDGE_DURATION_MS
+  private afterAcknowledge(
+    generation: number,
+    cue: MotionCue,
+    route: MapRoute | MapTransferRoute,
+  ): void {
+    if (generation !== this.generation || this.disposed) return
+    const next = this.nextAdjacentMotionCue(cue.agentId, cue.roomId)
+    if (next) {
+      this.currentCue = next.cue
+      this.emit()
+      const transferRoute = this.transferRouteFor(cue.roomId, next.cue.roomId)
+      if (transferRoute) {
+        this.activeRouteId = transferRoute.id
+        if (this.reducedMotion) this.startReducedInteraction(generation, next.cue, transferRoute)
+        else this.walkRoute(generation, next.cue, transferRoute, 1, 'walk')
+        return
+      }
+      if (this.reducedMotion) this.startReducedInteraction(generation, next.cue, route)
+      else this.faceTarget(generation, next.cue, route)
+      return
+    }
+    const dockRoute = this.routeFor(cue)
+    if (!dockRoute) return this.completeCue(generation)
+    this.activeRouteId = dockRoute.id
+    if (this.reducedMotion) return this.completeCue(generation)
+    this.walkRoute(generation, cue, dockRoute, 1, 'return')
   }
 
   private completeCue(generation: number): void {
@@ -284,6 +372,8 @@ export class AnimationDirector {
     if (this.currentCue?.agentId === 'verifier-a') this.verifierAHasReturned = true
     this.agents = dockedAgents()
     this.currentCue = null
+    this.activeRouteId = null
+    this.currentCycleIndex = null
     this.emit()
     this.startNext()
   }
@@ -299,7 +389,20 @@ export class AnimationDirector {
   private cancelCurrentWork(clearCurrentCue: boolean): void {
     this.clearTimer()
     if (clearCurrentCue) this.currentCue = null
+    if (clearCurrentCue) this.activeRouteId = null
+    this.currentCycleIndex = null
     this.agents = dockedAgents()
+  }
+
+  private stopAtTerminal(): void {
+    this.generation += 1
+    this.cancelCurrentWork(true)
+    this.queue.length = 0
+    this.currentCue = null
+    this.activeRouteId = null
+    this.currentCycleIndex = null
+    this.terminal = true
+    this.emit()
   }
 
   private clearTimer(): void {
@@ -310,6 +413,22 @@ export class AnimationDirector {
 
   private canStart(cue: MapCue): boolean {
     return cue.agentId !== 'verifier-b' || this.verifierAHasReturned
+  }
+
+  private movementDuration(start: MapPoint, end: MapPoint): number {
+    return (Math.abs(end.x - start.x) + Math.abs(end.y - start.y)) / this.movementUnitsPerSecond * 1000
+  }
+
+  private nextAdjacentMotionCue(agentId: MapAgentId, fromRoomId: NonNullable<MapCue['roomId']>): QueuedMotionCue | null {
+    const next = this.queue[0]
+    if (!next || !isMotionCue(next.cue) || next.cue.agentId !== agentId) return null
+    if (next.cue.roomId !== fromRoomId && !this.transferRouteFor(fromRoomId, next.cue.roomId)) return null
+    this.queue.shift()
+    return { sequence: next.sequence, cue: next.cue }
+  }
+
+  private transferRouteFor(fromRoomId: NonNullable<MapCue['roomId']>, toRoomId: NonNullable<MapCue['roomId']>): MapTransferRoute | null {
+    return MAP_TRANSFER_ROUTES.find((route) => route.fromRoomId === fromRoomId && route.toRoomId === toRoomId) ?? null
   }
 
   private waitingForVerifierA(): boolean {

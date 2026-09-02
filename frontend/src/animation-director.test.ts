@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
-import { AnimationDirector, MAP_MOVEMENT_UNITS_PER_SECOND, type AnimationDirectorState } from './animation-director'
+import {
+  AnimationDirector,
+  INTERACTION_CYCLE_DURATION_MS,
+  MAP_MOVEMENT_UNITS_PER_SECOND,
+  RECORDED_REPLAY_MOVEMENT_UNITS_PER_SECOND,
+  type AnimationDirectorState,
+} from './animation-director'
 import { previewEvents } from './fixtures'
 import type { PresentationEvent, PresentationEventType } from './types'
 
@@ -34,6 +40,35 @@ describe('Sprint 24 animation director', () => {
       vi.runAllTimers()
       expect(agent(director.getState(), 'mapper')).toMatchObject({ x: 271, y: 478, phase: 'docked' })
       expect(director.getState()).toMatchObject({ active: false, currentCue: null })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('uses default live speed and exposes the fixed recorded replay speed', () => {
+    const live = new AnimationDirector({ scheduler })
+    const recorded = new AnimationDirector({ scheduler, movementUnitsPerSecond: RECORDED_REPLAY_MOVEMENT_UNITS_PER_SECOND })
+    expect(live.getState().movementUnitsPerSecond).toBe(MAP_MOVEMENT_UNITS_PER_SECOND)
+    expect(recorded.getState().movementUnitsPerSecond).toBe(210)
+    expect(MAP_MOVEMENT_UNITS_PER_SECOND).toBe(50)
+  })
+
+  it('emits finite 720 ms interaction cycles with the current one in state', () => {
+    vi.useFakeTimers()
+    try {
+      const director = new AnimationDirector({ scheduler })
+      director.enqueue(event(1, 'mapper.activated'))
+      // Mapper route: 49 + 136 map units, then fixed face state.
+      vi.advanceTimersByTime(980 + 2720 + 120)
+      expect(agent(director.getState(), 'mapper')).toMatchObject({ phase: 'interact' })
+      expect(director.getState().currentCycleIndex).toBe(1)
+      vi.advanceTimersByTime(INTERACTION_CYCLE_DURATION_MS - 1)
+      expect(director.getState().currentCycleIndex).toBe(1)
+      vi.advanceTimersByTime(1)
+      expect(director.getState().currentCycleIndex).toBe(2)
+      vi.advanceTimersByTime(INTERACTION_CYCLE_DURATION_MS)
+      expect(agent(director.getState(), 'mapper')).toMatchObject({ phase: 'acknowledge' })
+      expect(director.getState().currentCycleIndex).toBeNull()
     } finally {
       vi.useRealTimers()
     }
@@ -93,6 +128,31 @@ describe('Sprint 24 animation director', () => {
     }
   })
 
+  it('groups adjacent same-agent cues through the fixed transfer corridor before its final dock return', () => {
+    vi.useFakeTimers()
+    try {
+      const snapshots: AnimationDirectorState[] = []
+      const director = new AnimationDirector({ scheduler, onStateChange: (state) => snapshots.push(state) })
+      director.enqueue([
+        event(1, 'identity.student_b_discovery'),
+        event(2, 'identity.student_a_retrieval'),
+      ])
+      // 717 map units to submissions at 50 units/s, then face, two cycles, acknowledge.
+      vi.advanceTimersByTime(14_340 + 120 + (2 * INTERACTION_CYCLE_DURATION_MS) + 160)
+      expect(director.getState().currentCue).toMatchObject({ routeId: 'authorization-tester-to-grade-lifecycle' })
+      expect(director.getState().activeRouteId).toBe('submissions-to-grade-lifecycle')
+      expect(agent(director.getState(), 'authorization-tester')).toMatchObject({ x: 814, y: 204, direction: 'down', phase: 'walk' })
+      const transferStart = snapshots.findIndex((state) => state.currentCue?.routeId === 'authorization-tester-to-grade-lifecycle'
+        && agent(state, 'authorization-tester').phase === 'walk')
+      expect(transferStart).toBeGreaterThan(0)
+      expect(snapshots.slice(0, transferStart).some((state) => agent(state, 'authorization-tester').phase === 'return')).toBe(false)
+      vi.runAllTimers()
+      expect(agent(director.getState(), 'authorization-tester')).toMatchObject({ x: 401, y: 478, phase: 'docked' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('defers Verifier B without a completed Verifier A journey and schedules no waiting timer', () => {
     vi.useFakeTimers()
     try {
@@ -134,6 +194,25 @@ describe('Sprint 24 animation director', () => {
     }
   })
 
+  it('cancels current choreography immediately at a terminal failure', () => {
+    vi.useFakeTimers()
+    try {
+      const director = new AnimationDirector({ scheduler, movementUnitsPerSecond: RECORDED_REPLAY_MOVEMENT_UNITS_PER_SECOND })
+      director.enqueue(event(1, 'mapper.activated'))
+      vi.advanceTimersByTime(500)
+      expect(agent(director.getState(), 'mapper').phase).toBe('walk')
+
+      director.enqueue({ ...event(2, 'session.failed'), state: 'failed' })
+      expect(director.getState()).toMatchObject({ active: false, currentCue: null })
+      expect(director.getState().agents.every((entry) => entry.phase === 'docked')).toBe(true)
+      vi.runAllTimers()
+      expect(director.getState().agents.every((entry) => entry.phase === 'docked')).toBe(true)
+      expect(director.enqueue(event(3, 'mapper.activated'))).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('uses ordered static acknowledgement without walking in reduced-motion mode', () => {
     vi.useFakeTimers()
     try {
@@ -147,6 +226,7 @@ describe('Sprint 24 animation director', () => {
         event(2, 'identity.student_b_discovery'),
       ])
       expect(agent(director.getState(), 'mapper')).toMatchObject({ x: 271, y: 478, phase: 'acknowledge' })
+      expect(director.getState().currentCycleIndex).toBe(1)
       vi.runAllTimers()
       expect(phases).toContain('acknowledge')
       expect(phases).not.toContain('walk')

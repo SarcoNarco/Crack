@@ -53,7 +53,7 @@ Logical roles run as sequential Python operations, not autonomous parallel servi
 
 ![Original top-down operations-floor environment for the synthetic school portal](frontend/public/map/crack-operations-floor.png)
 
-The console overlays fixed canonical room labels, narrow orthogonal routes, four staging slots, and safe latest-event highlights on this local original environment. During an operator-started replay, four labeled 32 px sprite characters take finite, sequential, cardinal-only journeys and return to their own staging slots. The floor never claims a physical agent location, parallel execution, or a security verdict; tool effects, sound, and the final 48-second replay schedule remain separate Sprint 25 work.
+The console overlays fixed canonical room labels, narrow orthogonal routes, four staging slots, and safe latest-event highlights on this local original environment. During an operator-started replay, four labeled 32 px sprite characters take finite, sequential, cardinal-only journeys, use compact event-tied tools, and return to their own staging slots. The floor never claims a physical agent location, parallel execution, damage, or a security verdict; only code-owned consensus can establish the recorded result.
 
 ## Evidence report
 
@@ -155,13 +155,15 @@ Sprint 21 adds a separate host-local runtime-console mode for exactly one active
 
 Each injected operation revalidates the captured active descriptor and the exact label-bound managed container. Resets re-inspect immediately before the fixed image-owned seed command, health-check afterwards, and return only a deterministic 16-character logical-state fingerprint derived inside the container; no fixture rows or tokens cross the Docker adapter. Runtime/architecture attestation occurs before provider client construction and publishes only target ID, approved registration hash, `running` status, and source-derived provenance. The console displays those facts only after an exact completed preflight event; preview remains committed synthetic fixture data and unbound. Offline Sprint 21 work does not start Docker, run providers, change the ledger, or make a security verdict.
 
-### Operations floor and bounded journeys (Sprints 23–24)
+### Operations floor and bounded journeys (Sprints 23–25)
 
 Sprint 23 replaces the old diagram canvas with one fixed 960×540 top-down floor. Six themed stations mirror the safe canonical portal graph, nine authored dotted routes use horizontal and vertical segments only, and Mapper, Authorization Tester, Verifier A, and Verifier B remain labeled in the staging dock. Geometry and labels are committed presentation data; events can highlight only the already allowlisted room relations. The original background and its provenance are local, with no CDN or copied commercial-game asset.
 
 Sprint 24 adds four original local eight-frame sprite sheets and one deterministic frontend animation director. Only fixed allowlisted events can select a fixed role, room, and authored route. The director keeps one role active at a time, requires an executed safe verifier call before verifier movement, holds Verifier B until Verifier A returns, cancels stale work on restart or unmount, and presents a fixed status instead of movement when reduced motion is requested. The initial completed preview remains staged; movement begins only after the existing replay or run control is used.
 
-The movement layer adds no tool attack effects, sound, replay retiming, backend change, provider call, Docker action, or ledger write. Sprite clipping, cardinal paths, local provenance, and safe captions are code-owned; verified findings still come only from ordinary consensus code.
+Sprint 25 adds compact scan, probe, pickaxe, and beam effects only for the already allowlisted active cues. Each tool cycle is finite and visually contained; reset, plan, consensus, finding, report, terminal, unsafe-route, and unmatched events cannot create an attack effect. Original low-volume local WAV cues follow the same fixed mapping, begin only after the recorded replay control is used, can be muted with the visible page-local sound control, and stop on cancellation or unmount. A terminal failure immediately returns every character to staging, suppresses later movement/tool audio, and permits only the short safe-stop cue.
+
+The recorded provider-free preview keeps all 32 accepted events in their original order and reaches its terminal event at exactly 48 seconds. The live event-driven director retains the authored 50-map-unit-per-second movement. Because the complete 960 × 540 authored routes cannot physically fit inside 48 seconds at that speed, recorded preview choreography uses a fixed 210-unit presentation speed and groups only adjacent same-role calls across fixed room-to-room corridors. It never skips, reorders, synthesizes, or advances an event before acceptance. These frontend-only choices change no backend, event schema, provider boundary, Docker behavior, runtime, target, scope controller, verdict, finding, or ledger state.
 
 ### Provider-free UI preview
 
@@ -173,7 +175,7 @@ npm ci
 npm run dev
 ```
 
-Open `http://127.0.0.1:4173/?preview=success`, then choose **Replay recorded preview**. The committed events replay one at a time so stage activation, sequential verifier roles, room relations, and bounded character journeys remain visible; replay makes no provider calls or ledger writes.
+Open `http://127.0.0.1:4173/?preview=success`, leave **Sound on** or choose **Sound off**, then choose **Replay recorded preview**. The 32 committed events replay over exactly 48 seconds so stage activation, sequential verifier roles, room relations, bounded character journeys, and finite tool cycles remain visible; replay makes no provider calls or ledger writes.
 
 ### Read existing evidence
 

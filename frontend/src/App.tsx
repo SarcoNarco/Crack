@@ -2,6 +2,7 @@ import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { liveTransport, type ConsoleTransport } from './api'
 import { ArchitectureMap } from './ArchitectureMap'
 import { previewEvents } from './fixtures'
+import { schedulePreviewReplay, type ScheduledReplayEvent } from './replay-schedule'
 import {
   consoleReducer,
   deriveConsole,
@@ -22,8 +23,6 @@ interface AppProps {
   initialEvents?: PresentationEvent[]
   transport?: ConsoleTransport
 }
-
-const PREVIEW_EVENT_INTERVAL_MS = 500
 
 const NEXT_STEP: Record<StageKey | 'session', string> = {
   session: 'The coordinator either begins fixed preflight or closes the terminal state.',
@@ -256,6 +255,7 @@ export default function App({ preview, initialEvents, transport = liveTransport 
   const [previewReplaying, setPreviewReplaying] = useState(false)
   const [mapGeneration, setMapGeneration] = useState(0)
   const [mapActive, setMapActive] = useState(false)
+  const [soundEnabled, setSoundEnabled] = useState(true)
   const unsubscribe = useRef<(() => void) | null>(null)
   const previewTimer = useRef<number | null>(null)
   const previewGeneration = useRef(0)
@@ -315,21 +315,26 @@ export default function App({ preview, initialEvents, transport = liveTransport 
     dispatch({ type: 'reset' })
     setSelectedSequence(null)
     if (previewKind) {
-      const events = previewEvents(previewKind)
+      const schedule = schedulePreviewReplay(
+        previewKind === 'failure' ? 'failure' : 'success',
+        previewEvents(previewKind === 'failure' ? 'failure' : 'success'),
+      )
       const generation = previewGeneration.current
       setPreviewReplaying(true)
 
       const replayNext = (index: number) => {
         if (previewGeneration.current !== generation) return
-        dispatch({ type: 'event', event: events[index] })
-        if (index === events.length - 1) {
+        const current = schedule[index] as ScheduledReplayEvent
+        dispatch({ type: 'event', event: current.event })
+        if (index === schedule.length - 1) {
           previewTimer.current = null
           setPreviewReplaying(false)
           return
         }
+        const next = schedule[index + 1] as ScheduledReplayEvent
         previewTimer.current = window.setTimeout(
           () => replayNext(index + 1),
-          PREVIEW_EVENT_INTERVAL_MS,
+          next.dueMs - current.dueMs,
         )
       }
 
@@ -384,6 +389,9 @@ export default function App({ preview, initialEvents, transport = liveTransport 
             <button type="button" className="start-button" onClick={start} disabled={runActive} aria-describedby="run-boundary">
               {previewKind && (previewReplaying || mapActive) ? 'Replay in progress' : derived.active || mapActive ? 'Contained run active' : previewKind ? 'Replay recorded preview' : 'Start contained verification run'}
             </button>
+            <button type="button" className="sound-control" aria-pressed={soundEnabled} onClick={() => setSoundEnabled((enabled) => !enabled)}>
+              {soundEnabled ? 'Sound on' : 'Sound off'}
+            </button>
             <span id="run-boundary">Server-generated session · one active run maximum</span>
             {startError && <p className="inline-error" role="alert">{startError}</p>}
           </div>
@@ -398,7 +406,13 @@ export default function App({ preview, initialEvents, transport = liveTransport 
           {consoleState.streamError && <p className="inline-error" role="alert">{consoleState.streamError}</p>}
         </section>
 
-        <ArchitectureMap events={consoleState.events} generation={mapGeneration} onAnimationActiveChange={setMapActive} />
+        <ArchitectureMap
+          events={consoleState.events}
+          generation={mapGeneration}
+          soundEnabled={soundEnabled}
+          recordedReplay={Boolean(previewKind)}
+          onAnimationActiveChange={setMapActive}
+        />
 
         <div className="primary-grid">
           <section className="story-section" aria-labelledby="story-heading">

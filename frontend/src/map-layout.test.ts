@@ -14,6 +14,7 @@ import {
   MAP_ROOM_IDS,
   MAP_ROOMS,
   MAP_ROUTES,
+  MAP_TRANSFER_ROUTES,
   MAP_WIDTH,
   STAGING_DOCK,
   STAGING_SLOTS,
@@ -90,6 +91,21 @@ describe('Sprint 23 static floor geometry', () => {
 
   it('has no unrelated route crossings; shared geometry stays on authored corridors', () => {
     expect(findUnapprovedRouteCrossings()).toEqual([])
+  })
+
+  it('pins bounded cardinal submissions and grade-lifecycle transfer routes', () => {
+    expect(MAP_TRANSFER_ROUTES.map((route) => route.id)).toEqual([
+      'submissions-to-grade-lifecycle',
+      'grade-lifecycle-to-submissions',
+    ])
+    for (const route of MAP_TRANSFER_ROUTES) {
+      const from = MAP_ROOMS.find((room) => room.id === route.fromRoomId)!
+      const to = MAP_ROOMS.find((room) => room.id === route.toRoomId)!
+      expect(route.waypoints[0]).toEqual(from.interactionPoint)
+      expect(route.waypoints.at(-1)).toEqual(to.interactionPoint)
+      expect(isCardinalRoute(route), route.id).toBe(true)
+      expect(route.waypoints.every(isPointInsideMap), route.id).toBe(true)
+    }
   })
 
   it('rejects an injected perpendicular crossing outside an authored junction', () => {

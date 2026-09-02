@@ -24,3 +24,11 @@
 - **Purpose:** Finite, authored Sprint 24 dock, cardinal-walk, face, acknowledge, return, and reduced-motion presentation for the four fixed Crack roles. These assets contain no tool attack effects or audio.
 - **Integrity:** SHA-256: Mapper `1ba75e8d6bb3a13c4be116cafaf771c590a635d461261a2edaf227227a031fbb`; Authorization Tester `9eb6281dd2ecefde23ed9cd3ac15107c32f1f5bb11610fe5996951932be88d60`; Verifier A `ef88bdb77c7b437a26983e3ea8ef404a7db8c115b77f6d977269708ecb0965d6`; Verifier B `bfe463c4f557f04d98e1bb9758ab030710cffef51416c7650439093a97b3779f`.
 - **Originality and rights:** The same originality and repository-compatible rights statement above applies. No commercial-game character, sprite, animation, palette, or other third-party asset was copied, traced, or used as an edit target; no external runtime asset dependency applies.
+
+## Event-tied audio cues
+
+- **Assets:** `frontend/public/map/audio/footsteps.wav`, `scan.wav`, `probe.wav`, `pickaxe.wav`, `beam.wav`, `consensus.wav`, and `failure.wav`.
+- **Tool and date:** Generated locally on 2026-09-02 by the deterministic repository script `frontend/scripts/generate-map-audio.mjs`; mono 16-bit PCM at 22,050 Hz, with fixed durations of 0.21–0.40 seconds.
+- **Purpose:** Low-volume, single-channel feedback for user-started recorded presentation events. The cues are never selected by event-provided paths or URLs and are not used as security evidence.
+- **Integrity:** SHA-256: Footsteps `6829b0eb14fa3c5b2be2c66bd5fef09e69d3cf20e6bec4e8f4722c19fd7c3bfe`; Scan `e589fa7ca5e6fbfb65e83facee3f275605ace116c75ff3a7428cf4ab0058b244`; Probe `1b0edd6c19fa0cf4546f65a17c3ea1b9a7fe331e0bdc5780662392acbb39a1dd`; Pickaxe `915e14700e223918ac2df580468975b5f678d3ed6445f5b4c2ba141f07b76d91`; Beam `e42e19145c0b9e8e8e4175a6bcfb037eb314197932a6fd1e7272b9436d0fb066`; Consensus `28960db98f8994adab8cafa9585dfc15b85936d444d8395cb14ecd3abcf6f9bd`; Failure `5aa373b88bcd5d1ac1c621d7b16eac4d28f80e2278044ed00103c9eedac08c88`.
+- **Originality and rights:** The sounds are original deterministic synthesized waveforms created for Crack. They copy no commercial-game or third-party recording, require no runtime attribution, download, CDN, or external license, and may be used, modified, and distributed with this repository under its applicable project terms.

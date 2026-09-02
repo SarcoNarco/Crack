@@ -274,6 +274,8 @@ Target recorded replay duration: **48 seconds**, acceptable range **45–50 seco
 
 The 32 recorded events remain ordered. Event display and map choreography may group adjacent events into one phase, but no event may be skipped, reordered, synthesized, or shown before it is accepted.
 
+Implementation note (2026-09-02): the complete authored 960 × 540 route set cannot fit the locked 48-second recorded replay while moving at the live 44–56-unit target speed. The implemented live director therefore remains at 50 map units per second, while recorded preview mode uses one fixed 210-unit presentation speed and may join only adjacent same-role cues through the fixed room-to-room corridors. This resolves the timing conflict without changing geometry, event order, acceptance timing, safe cue ownership, or the terminal timestamp.
+
 ## 11. Event-to-animation ownership
 
 Add a pure presentation mapping from allowlisted event type to a finite cue:

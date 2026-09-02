@@ -65,6 +65,9 @@ h3 { margin-bottom: .7rem; font-size: clamp(1.05rem, 2vw, 1.5rem); }
 .start-button { width: 100%; min-height: 56px; padding: .9rem 1rem; border: 1px solid #ff6b54; background: linear-gradient(135deg, var(--red-dark), #aa4528); color: #fff; font: 900 .8rem var(--mono); letter-spacing: .09em; text-transform: uppercase; cursor: pointer; box-shadow: 0 0 28px rgba(255,70,80,.14); }
 .start-button:hover:not(:disabled) { filter: brightness(1.12); }
 .start-button:disabled { border-color: var(--strong-line); background: #242830; color: #989fa9; box-shadow: none; }
+.sound-control { display: block; width: 100%; min-height: 38px; margin-top: .65rem; border: 1px solid var(--strong-line); background: #171b21; color: var(--muted); font: 800 .68rem var(--mono); letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
+.sound-control[aria-pressed="true"] { border-color: #4c8193; color: #c2efff; background: rgba(42, 106, 128, .2); }
+.sound-control:hover { color: var(--text); border-color: #86b4c4; }
 .run-control > span { display: block; margin-top: .65rem; color: var(--muted); font-size: .72rem; text-align: center; }
 .inline-error { margin: 1rem 0 0 !important; padding: .8rem 1rem; border-left: 3px solid var(--red); background: rgba(255,70,80,.09); color: #ffd3d5 !important; }
 
@@ -117,6 +120,28 @@ h3 { margin-bottom: .7rem; font-size: clamp(1.05rem, 2vw, 1.5rem); }
 .architecture-agent-sprite { image-rendering: pixelated; }
 .architecture-agent-layer { overflow: hidden; }
 .architecture-agent-label { pointer-events: none; }
+.architecture-tool-viewport { overflow: hidden; pointer-events: none; }
+.architecture-tool-effect { overflow: hidden; pointer-events: none; }
+.architecture-tool-body, .architecture-tool-probe-handle, .architecture-tool-beam-device { fill: #dcecf1; stroke: #081218; stroke-width: 1.5; }
+.architecture-tool-scan-line, .architecture-tool-scan-arc { fill: none; stroke: #79dbf5; stroke-width: 2; stroke-linecap: round; }
+.architecture-tool-scan-arc-wide { opacity: .65; }
+.architecture-tool-probe-wand { fill: none; stroke: #ffc46e; stroke-width: 2.5; stroke-linecap: round; }
+.architecture-tool-probe-spark { fill: #fff2ac; stroke: #8c5629; stroke-width: 1; }
+.architecture-tool-pickaxe-handle { fill: none; stroke: #ce8551; stroke-width: 3; stroke-linecap: round; }
+.architecture-tool-pickaxe-head { fill: none; stroke: #e5edf2; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.architecture-tool-impact { fill: #ffc26e; stroke: #7b3d25; stroke-width: 1; }
+.architecture-tool-beam-line { fill: none; stroke: #bd83ff; stroke-width: 2.5; stroke-linecap: round; }
+.architecture-tool-beam-cap { fill: none; stroke: #e5d1ff; stroke-width: 2; stroke-linecap: round; }
+.architecture-tool-effect.is-cycling .architecture-tool-scan-arc { animation: map-tool-scan 720ms ease-out 1 both; }
+.architecture-tool-effect.is-cycling .architecture-tool-probe-wand, .architecture-tool-effect.is-cycling .architecture-tool-probe-spark { animation: map-tool-probe 720ms ease-in-out 1 both; transform-origin: 32px 28px; }
+.architecture-tool-effect.is-cycling .architecture-tool-pickaxe-handle, .architecture-tool-effect.is-cycling .architecture-tool-pickaxe-head { animation: map-tool-pickaxe 720ms cubic-bezier(.32,.04,.4,1) 1 both; transform-origin: 32px 29px; }
+.architecture-tool-effect.is-cycling .architecture-tool-impact { animation: map-tool-impact 720ms steps(2, end) 1 both; transform-origin: 32px 9px; }
+.architecture-tool-effect.is-cycling .architecture-tool-beam-line, .architecture-tool-effect.is-cycling .architecture-tool-beam-cap { animation: map-tool-beam 720ms steps(2, end) 1 both; }
+@keyframes map-tool-scan { 0% { opacity: .2; transform: scale(.58); transform-origin: 32px 24px; } 52% { opacity: 1; transform: scale(1); transform-origin: 32px 24px; } 100% { opacity: .4; transform: scale(1.08); transform-origin: 32px 24px; } }
+@keyframes map-tool-probe { 0%, 100% { transform: rotate(0deg); } 44% { transform: rotate(-13deg); } 72% { transform: rotate(4deg); } }
+@keyframes map-tool-pickaxe { 0%, 100% { transform: rotate(0deg); } 38% { transform: rotate(-28deg); } 63% { transform: rotate(15deg); } }
+@keyframes map-tool-impact { 0%, 55% { opacity: 0; } 56%, 80% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes map-tool-beam { 0%, 20% { opacity: 0; stroke-dasharray: 0 18; } 24%, 70% { opacity: 1; stroke-dasharray: 18 0; } 100% { opacity: .15; stroke-dasharray: 0 18; } }
 .architecture-pan-hint { display: none; }
 .architecture-context { min-width: 0; padding: 1.15rem; border: 1px solid var(--line); background: var(--panel); }
 .architecture-context h3 { margin: .5rem 0 1rem; font-size: 1.05rem; }
@@ -296,10 +321,13 @@ footer strong { color: #d5d8dd; }
   .architecture-floor-grid, .architecture-corridor, .architecture-corridor.is-related, .architecture-interaction-point { stroke: CanvasText; }
   .architecture-room.is-related .architecture-room-shell { stroke: Highlight; }
   .architecture-room-label, .architecture-staging-label, .architecture-agent-label { fill: CanvasText; stroke: Canvas; }
+  .architecture-tool-body, .architecture-tool-probe-handle, .architecture-tool-beam-device, .architecture-tool-impact { fill: CanvasText; stroke: Canvas; }
+  .architecture-tool-scan-line, .architecture-tool-scan-arc, .architecture-tool-probe-wand, .architecture-tool-pickaxe-handle, .architecture-tool-pickaxe-head, .architecture-tool-beam-line, .architecture-tool-beam-cap { stroke: CanvasText; }
   .architecture-state, .architecture-static-tag { color: CanvasText; border-color: CanvasText; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  .architecture-tool-effect.is-cycling .architecture-tool-scan-arc, .architecture-tool-effect.is-cycling .architecture-tool-probe-wand, .architecture-tool-effect.is-cycling .architecture-tool-probe-spark, .architecture-tool-effect.is-cycling .architecture-tool-pickaxe-handle, .architecture-tool-effect.is-cycling .architecture-tool-pickaxe-head, .architecture-tool-effect.is-cycling .architecture-tool-impact, .architecture-tool-effect.is-cycling .architecture-tool-beam-line, .architecture-tool-effect.is-cycling .architecture-tool-beam-cap { animation: none !important; }
 }

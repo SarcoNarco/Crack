@@ -1,10 +1,27 @@
 import { StrictMode } from 'react'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { afterEach, beforeEach } from 'vitest'
+import appSource from './App.tsx?raw'
 import App from './App'
 import { previewEvents } from './fixtures'
+import { SUCCESS_REPLAY_DUE_MS, schedulePreviewReplay } from './replay-schedule'
 import type { ConsoleTransport } from './api'
 import type { PresentationEvent, RunStatus } from './types'
+
+class AppTestAudio {
+  volume = 0
+  currentTime = 0
+  preload = ''
+
+  constructor(readonly src: string) {}
+
+  play(): Promise<void> { return Promise.resolve() }
+  pause(): void {}
+}
+
+beforeEach(() => vi.stubGlobal('Audio', AppTestAudio))
+afterEach(() => vi.unstubAllGlobals())
 
 describe('live operations console', () => {
   it('shows the successful replay with the truthful Student A and Student B story', () => {
@@ -131,7 +148,7 @@ describe('live operations console', () => {
     expect(screen.getByRole('button', { name: 'Contained run active' })).toBeDisabled()
   })
 
-  it('paces a recorded preview replay instead of repainting only the terminal state', () => {
+  it('replays the successful fixture on its fixed 48-second schedule', () => {
     vi.useFakeTimers()
     try {
       render(<App preview="success" />)
@@ -142,17 +159,96 @@ describe('live operations console', () => {
       expect(screen.getAllByRole('button', { name: /^Inspect event/ })).toHaveLength(1)
       expect(screen.getByText('0 / 7 stages complete')).toBeInTheDocument()
 
-      act(() => vi.advanceTimersToNextTimer())
-      expect(screen.getAllByRole('button', { name: /^Inspect event/ })).toHaveLength(2)
+      let elapsed = 0
+      for (const dueMs of SUCCESS_REPLAY_DUE_MS.slice(1, -1)) {
+        act(() => vi.advanceTimersByTime(dueMs - elapsed))
+        elapsed = dueMs
+      }
+      act(() => vi.advanceTimersByTime(47_999 - elapsed))
+      expect(screen.getAllByRole('button', { name: /^Inspect event/ })).toHaveLength(31)
+      expect(screen.queryByRole('heading', { name: 'Cross-student detail read verified.' })).not.toBeInTheDocument()
 
-      act(() => vi.advanceTimersByTime(15_000))
-      expect(screen.getAllByRole('button', { name: /^Inspect event/ })).toHaveLength(previewEvents('success').length)
-      expect(screen.getByRole('button', { name: 'Replay in progress' })).toBeDisabled()
-
-      act(() => vi.runAllTimers())
-      expect(screen.getAllByRole('button', { name: /^Inspect event/ })).toHaveLength(previewEvents('success').length)
-      expect(screen.getByRole('button', { name: 'Replay recorded preview' })).toBeEnabled()
+      act(() => vi.advanceTimersByTime(1))
+      expect(screen.getAllByRole('button', { name: /^Inspect event/ })).toHaveLength(32)
+      expect(screen.getByRole('heading', { name: 'Cross-student detail read verified.' })).toBeInTheDocument()
       expect(screen.getByText('7 / 7 stages complete')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Replay recorded preview' })).toBeEnabled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps sound on by default and exposes an accessible page-local toggle', async () => {
+    const user = userEvent.setup()
+    render(<App preview="success" />)
+
+    const control = screen.getByRole('button', { name: 'Sound on' })
+    expect(control).toHaveAttribute('aria-pressed', 'true')
+    await user.click(control)
+    expect(screen.getByRole('button', { name: 'Sound off' })).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('restores staging and replay control at the terminal failure event', () => {
+    vi.useFakeTimers()
+    try {
+      const events = previewEvents('failure')
+      const schedule = schedulePreviewReplay('failure', events)
+      const { container } = render(<App preview="failure" />)
+      fireEvent.click(screen.getByRole('button', { name: 'Replay recorded preview' }))
+
+      let elapsed = 0
+      for (const entry of schedule.slice(1)) {
+        act(() => vi.advanceTimersByTime(entry.dueMs - elapsed))
+        elapsed = entry.dueMs
+      }
+
+      expect(screen.getAllByRole('button', { name: /^Inspect event/ })).toHaveLength(events.length)
+      expect(screen.getByRole('heading', { name: 'Run stopped safely.' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Replay recorded preview' })).toBeEnabled()
+      expect(container.querySelectorAll('[data-agent-state="docked"]')).toHaveLength(4)
+      expect(container.querySelector('[data-tool-effect]')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not own audio playback in the application shell', () => {
+    expect(appSource).not.toMatch(/\b(?:Audio|AudioContext|HTMLAudioElement)\b|\.play\s*\(/)
+  })
+
+  it('cancels pending replay work when the preview unmounts', () => {
+    vi.useFakeTimers()
+    try {
+      const view = render(<App preview="success" />)
+      fireEvent.click(screen.getByRole('button', { name: 'Replay recorded preview' }))
+      act(() => vi.advanceTimersByTime(3_000))
+      expect(screen.getAllByRole('button', { name: /^Inspect event/ })).toHaveLength(4)
+
+      view.unmount()
+      act(() => vi.runAllTimers())
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not leak stale events into a new replay after an earlier replay unmounts', () => {
+    vi.useFakeTimers()
+    try {
+      const first = render(<App preview="success" />)
+      fireEvent.click(screen.getByRole('button', { name: 'Replay recorded preview' }))
+      act(() => vi.advanceTimersByTime(3_000))
+      expect(screen.getAllByRole('button', { name: /^Inspect event/ })).toHaveLength(4)
+      first.unmount()
+      act(() => vi.runAllTimers())
+
+      render(<App preview="success" />)
+      fireEvent.click(screen.getByRole('button', { name: 'Replay recorded preview' }))
+      expect(screen.getAllByRole('button', { name: /^Inspect event/ })).toHaveLength(1)
+      act(() => vi.advanceTimersByTime(999))
+      expect(screen.getAllByRole('button', { name: /^Inspect event/ })).toHaveLength(1)
+      act(() => vi.advanceTimersByTime(1))
+      expect(screen.getAllByRole('button', { name: /^Inspect event/ })).toHaveLength(2)
     } finally {
       vi.useRealTimers()
     }

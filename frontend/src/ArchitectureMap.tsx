@@ -8,13 +8,22 @@ import {
   MAP_HEIGHT,
   MAP_ROOMS,
   MAP_ROUTES,
+  MAP_TRANSFER_ROUTES,
   MAP_WIDTH,
   STAGING_DOCK,
   STAGING_SLOTS,
   type MapRoom,
 } from './map-layout'
-import { AnimationDirector, MAP_MOVEMENT_UNITS_PER_SECOND, type AnimationAgentState, type AnimationDirectorState } from './animation-director'
+import {
+  AnimationDirector,
+  MAP_MOVEMENT_UNITS_PER_SECOND,
+  RECORDED_REPLAY_MOVEMENT_UNITS_PER_SECOND,
+  type AnimationAgentState,
+  type AnimationDirectorState,
+  type CardinalDirection,
+} from './animation-director'
 import { isMotionCue, type MapCue } from './map-cues'
+import { ReplayAudioController } from './replay-audio'
 import { AGENT_SPRITE_MANIFEST, spriteFrame, type SpriteFrameName } from './sprite-manifest'
 import type { PresentationEvent } from './types'
 
@@ -57,15 +66,27 @@ function samePoint(left: { x: number; y: number }, right: { x: number; y: number
   return left.x === right.x && left.y === right.y
 }
 
-function motionSegment(agent: AnimationAgentState, cue: MapCue | null) {
+function routeForActiveId(routeId: string | null) {
+  if (!routeId) return null
+  return MAP_ROUTES.find((candidate) => candidate.id === routeId)
+    ?? MAP_TRANSFER_ROUTES.find((candidate) => candidate.id === routeId)
+    ?? null
+}
+
+function motionSegment(
+  agent: AnimationAgentState,
+  cue: MapCue | null,
+  activeRouteId: string | null,
+  movementUnitsPerSecond: number,
+) {
   if (cue === null || !isMotionCue(cue) || cue.agentId !== agent.agentId || (agent.phase !== 'walk' && agent.phase !== 'return')) return null
-  const route = MAP_ROUTES.find((candidate) => candidate.id === cue.routeId)
+  const route = routeForActiveId(activeRouteId)
   if (!route) return null
   const points = agent.phase === 'walk' ? route.waypoints : [...route.waypoints].reverse()
   const index = points.findIndex((point) => samePoint(point, agent))
   if (index < 0 || index >= points.length - 1) return null
   const target = points[index + 1]
-  const durationMs = (Math.abs(target.x - agent.x) + Math.abs(target.y - agent.y)) / MAP_MOVEMENT_UNITS_PER_SECOND * 1000
+  const durationMs = (Math.abs(target.x - agent.x) + Math.abs(target.y - agent.y)) / movementUnitsPerSecond * 1000
   return { target, durationMs }
 }
 
@@ -74,10 +95,22 @@ function frameName(agent: AnimationAgentState): SpriteFrameName {
   return `${agent.direction}${stride}` as SpriteFrameName
 }
 
-function AnimatedAgent({ agent, cue, reducedMotion }: { agent: AnimationAgentState; cue: MapCue | null; reducedMotion: boolean }) {
+function AnimatedAgent({
+  agent,
+  cue,
+  activeRouteId,
+  movementUnitsPerSecond,
+  reducedMotion,
+}: {
+  agent: AnimationAgentState
+  cue: MapCue | null
+  activeRouteId: string | null
+  movementUnitsPerSecond: number
+  reducedMotion: boolean
+}) {
   const manifest = AGENT_SPRITE_MANIFEST[agent.agentId]
   const frame = spriteFrame(agent.agentId, frameName(agent))
-  const movement = reducedMotion ? null : motionSegment(agent, cue)
+  const movement = reducedMotion ? null : motionSegment(agent, cue, activeRouteId, movementUnitsPerSecond)
   const alternateFrame = spriteFrame(agent.agentId, `${agent.direction}${frame.name.endsWith('0') ? '1' : '0'}` as SpriteFrameName)
   return <g
     data-agent-id={agent.agentId}
@@ -116,14 +149,81 @@ function AnimatedAgent({ agent, cue, reducedMotion }: { agent: AnimationAgentSta
   </g>
 }
 
+type ToolAction = Exclude<MapCue['actionId'], 'none'>
+
+function isToolAction(actionId: MapCue['actionId']): actionId is ToolAction {
+  return actionId === 'scan' || actionId === 'probe' || actionId === 'pickaxe' || actionId === 'beam'
+}
+
+function toolTransform(direction: CardinalDirection): string {
+  switch (direction) {
+    case 'right': return 'rotate(90 32 30)'
+    case 'down': return 'rotate(180 32 30)'
+    case 'left': return 'rotate(270 32 30)'
+    case 'up': return 'rotate(0 32 30)'
+  }
+}
+
+function ToolEffect({
+  agent,
+  cue,
+  cycleIndex,
+  reducedMotion,
+}: {
+  agent: AnimationAgentState
+  cue: MapCue | null
+  cycleIndex: number | null
+  reducedMotion: boolean
+}) {
+  if (!cue || !isMotionCue(cue) || cue.agentId !== agent.agentId || !isToolAction(cue.actionId)) return null
+  if (agent.phase !== 'interact' && agent.phase !== 'acknowledge') return null
+  const activeCycle = cycleIndex !== null
+  const effectKey = `${cue.agentId}-${cue.roomId}-${cue.actionId}-${cycleIndex ?? 'acknowledge'}`
+  const effectClass = `architecture-tool-effect architecture-tool-${cue.actionId}${activeCycle && !reducedMotion ? ' is-cycling' : ''}`
+  const common = {
+    className: effectClass,
+    'data-tool-effect': cue.actionId,
+    'data-effect-cycle': activeCycle ? String(cycleIndex) : 'acknowledge',
+    'data-effect-key': effectKey,
+  }
+  return <g transform={`translate(${agent.x} ${agent.y})`} aria-hidden="true" {...common}>
+    <svg key={effectKey} className="architecture-tool-viewport" x="-32" y="-28" width="64" height="56" viewBox="0 0 64 56" overflow="hidden">
+      <g transform={toolTransform(agent.direction)}>
+        {cue.actionId === 'scan' && <>
+          <circle className="architecture-tool-body" cx="32" cy="28" r="4" />
+          <path className="architecture-tool-scan-line" d="M32 23V8" />
+          <path className="architecture-tool-scan-arc" d="M24 15a11 11 0 0 1 16 0" />
+          <path className="architecture-tool-scan-arc architecture-tool-scan-arc-wide" d="M18 10a20 20 0 0 1 28 0" />
+        </>}
+        {cue.actionId === 'probe' && <>
+          <path className="architecture-tool-probe-wand" d="M32 28V9" />
+          <rect className="architecture-tool-probe-handle" x="28.5" y="24" width="7" height="8" rx="1" />
+          <path className="architecture-tool-probe-spark" d="M32 5l2 3-2 3-2-3z" />
+        </>}
+        {cue.actionId === 'pickaxe' && <>
+          <path className="architecture-tool-pickaxe-handle" d="M32 30L22 10" />
+          <path className="architecture-tool-pickaxe-head" d="M15 12c6-5 14-5 20 0M17 14l5 3" />
+          <path className="architecture-tool-impact" d="M32 6l2 2 3-1-1 3 2 2-3 1-1 3-2-2-3 1 1-3-2-2 3-1z" />
+        </>}
+        {cue.actionId === 'beam' && <>
+          <rect className="architecture-tool-beam-device" x="28" y="23" width="8" height="10" rx="1" />
+          <path className="architecture-tool-beam-line" d="M32 23V5" />
+          <path className="architecture-tool-beam-cap" d="M27 7h10" />
+        </>}
+      </g>
+    </svg>
+  </g>
+}
+
 function animationAnnouncement(animation: AnimationDirectorState): string {
   const cue = animation.currentCue
   if (cue === null || !isMotionCue(cue)) return animation.statusText
   const agent = animation.agents.find((candidate) => candidate.agentId === cue.agentId)
   const room = MAP_ROOMS.find((candidate) => candidate.id === cue.roomId)
   const phase = agent?.phase ?? 'docked'
-  const action = cue.actionId === 'scan' ? 'scan' : cue.actionId === 'probe' ? 'probe' : 'inspection'
-  return `${AGENT_SPRITE_MANIFEST[cue.agentId].label}, ${room?.label ?? 'fixed room'}, ${phase}, ${action}. ${cue.caption}`
+  const action = cue.actionId === 'scan' ? 'scan' : cue.actionId === 'probe' ? 'probe' : cue.actionId === 'pickaxe' ? 'pickaxe review' : cue.actionId === 'beam' ? 'beam review' : 'inspection'
+  const cycle = animation.currentCycleIndex ? ` Cycle ${animation.currentCycleIndex} of ${cue.cycles}.` : ''
+  return `${AGENT_SPRITE_MANIFEST[cue.agentId].label}, ${room?.label ?? 'fixed room'}, ${phase}, ${action}.${cycle} ${cue.caption}`
 }
 
 interface EventFeedState {
@@ -136,9 +236,13 @@ interface EventFeedState {
   visibleLastSequence: number
 }
 
-function useMapAnimation(events: readonly PresentationEvent[], generation: number): AnimationDirectorState {
+function useMapAnimation(
+  events: readonly PresentationEvent[],
+  generation: number,
+  movementUnitsPerSecond: number,
+): AnimationDirectorState {
   const directorRef = useRef<AnimationDirector | null>(null)
-  if (directorRef.current === null) directorRef.current = new AnimationDirector({ reducedMotion: getReducedMotion() })
+  if (directorRef.current === null) directorRef.current = new AnimationDirector({ reducedMotion: getReducedMotion(), movementUnitsPerSecond })
   const director = directorRef.current
   const [animationState, setAnimationState] = useState<AnimationDirectorState>(() => director.getState())
   const feedRef = useRef<EventFeedState>({
@@ -158,7 +262,7 @@ function useMapAnimation(events: readonly PresentationEvent[], generation: numbe
     return () => {
       unsubscribe()
       globalThis.queueMicrotask(() => {
-        if (cleanupVersion.current === version) director.destroy()
+        if (cleanupVersion.current === version) director.reset()
       })
     }
   }, [director])
@@ -229,18 +333,101 @@ function useMapAnimation(events: readonly PresentationEvent[], generation: numbe
   return animationState
 }
 
+interface AudioMarkers {
+  walking: string | null
+  tool: string | null
+  terminal: boolean
+  terminalSequences: Set<number>
+}
+
+function useReplayAudio(
+  events: readonly PresentationEvent[],
+  animation: AnimationDirectorState,
+  generation: number,
+  soundEnabled: boolean,
+  recordedReplay: boolean,
+): void {
+  const controllerRef = useRef<ReplayAudioController | null>(null)
+  if (controllerRef.current === null) controllerRef.current = new ReplayAudioController({ enabled: soundEnabled })
+  const controller = controllerRef.current
+  const markersRef = useRef<AudioMarkers>({ walking: null, tool: null, terminal: false, terminalSequences: new Set() })
+  const audioCleanupVersion = useRef(0)
+
+  useEffect(() => {
+    controller.reset()
+    controller.setEnabled(soundEnabled)
+    markersRef.current = { walking: null, tool: null, terminal: false, terminalSequences: new Set() }
+    if (recordedReplay && generation > 0) controller.armReplay()
+  }, [controller, generation, recordedReplay])
+
+  useEffect(() => {
+    controller.setEnabled(soundEnabled)
+  }, [controller, soundEnabled])
+
+  useEffect(() => {
+    const version = ++audioCleanupVersion.current
+    return () => {
+      globalThis.queueMicrotask(() => {
+        if (audioCleanupVersion.current !== version) return
+        controller.reset()
+      })
+    }
+  }, [controller])
+
+  useEffect(() => {
+    if (!recordedReplay || generation === 0 || !controller.isArmed() || markersRef.current.terminal) return
+    const moving = animation.agents.find((agent) => agent.phase === 'walk' || agent.phase === 'return')
+    const walking = moving ? `${moving.agentId}:${moving.phase}:${moving.x}:${moving.y}:${moving.direction}:${animation.activeRouteId ?? ''}` : null
+    if (walking && walking !== markersRef.current.walking) controller.playCue('footsteps')
+    markersRef.current.walking = walking
+
+    const cue = animation.currentCue
+    const tool = cue && isMotionCue(cue) && isToolAction(cue.actionId) && animation.currentCycleIndex !== null
+      ? `${cue.agentId}:${cue.roomId}:${cue.actionId}:${animation.currentCycleIndex}`
+      : null
+    if (tool && tool !== markersRef.current.tool && cue && isToolAction(cue.actionId)) controller.playCue(cue.actionId)
+    markersRef.current.tool = tool
+  }, [animation, controller, generation, recordedReplay])
+
+  useEffect(() => {
+    if (!recordedReplay || generation === 0 || !controller.isArmed()) return
+    for (const event of events) {
+      if (markersRef.current.terminalSequences.has(event.sequence)) continue
+      markersRef.current.terminalSequences.add(event.sequence)
+      if (event.type === 'consensus.completed' && event.state === 'completed') controller.playCue('consensus')
+      if (event.type === 'session.failed' && event.state === 'failed') {
+        markersRef.current.terminal = true
+        controller.playCue('failure')
+      }
+      if (event.type === 'session.completed' && event.state === 'completed') {
+        markersRef.current.terminal = true
+        controller.stop()
+      }
+    }
+  }, [controller, events, generation, recordedReplay])
+}
+
 export function ArchitectureMap({
   events,
   generation = 0,
+  soundEnabled = true,
+  recordedReplay = false,
   onAnimationActiveChange,
 }: {
   events: readonly PresentationEvent[]
   generation?: number
+  soundEnabled?: boolean
+  recordedReplay?: boolean
   onAnimationActiveChange?: (active: boolean) => void
 }) {
   const map = deriveArchitectureMap(events)
   const relatedNodes = map.relation?.nodeIds ?? []
-  const animation = useMapAnimation(events, generation)
+  const animation = useMapAnimation(
+    events,
+    generation,
+    recordedReplay ? RECORDED_REPLAY_MOVEMENT_UNITS_PER_SECOND : MAP_MOVEMENT_UNITS_PER_SECOND,
+  )
+  useReplayAudio(events, animation, generation, soundEnabled, recordedReplay)
   const highlightedNodes = animation.currentCue && isMotionCue(animation.currentCue)
     ? [animation.currentCue.roomId]
     : relatedNodes
@@ -279,7 +466,21 @@ export function ArchitectureMap({
             {STAGING_SLOTS.map((slot) => <rect key={slot.agentId} className="architecture-staging-slot" x={slot.bounds.x} y={slot.bounds.y} width={slot.bounds.width} height={slot.bounds.height} rx="4" />)}
           </g>
           <g className="architecture-agent-layer" aria-label="Agent staging and finite journey presentation">
-            {animation.agents.map((agent) => <AnimatedAgent key={agent.agentId} agent={agent} cue={animation.currentCue} reducedMotion={animation.reducedMotion} />)}
+            {animation.agents.map((agent) => <AnimatedAgent
+              key={agent.agentId}
+              agent={agent}
+              cue={animation.currentCue}
+              activeRouteId={animation.activeRouteId}
+              movementUnitsPerSecond={animation.movementUnitsPerSecond}
+              reducedMotion={animation.reducedMotion}
+            />)}
+            {animation.agents.map((agent) => <ToolEffect
+              key={`tool-${agent.agentId}`}
+              agent={agent}
+              cue={animation.currentCue}
+              cycleIndex={animation.currentCycleIndex}
+              reducedMotion={animation.reducedMotion}
+            />)}
           </g>
         </svg>
         <p className="architecture-pan-hint">Swipe or use Shift + mouse wheel to view the full operations floor.</p>
